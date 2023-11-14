@@ -12,15 +12,11 @@ package llm
 //go:generate mv ggml/build/cpu/bin/server ggml/build/cpu/bin/ollama-runner
 
 //go:generate git submodule update --force gguf
-//go:generate git -C gguf apply ../patches/0001-copy-cuda-runtime-libraries.patch
-//go:generate git -C gguf apply ../patches/0001-update-default-log-target.patch
-//go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off
-//go:generate cmake --build gguf/build/cpu --target server --config Release
-//go:generate mv gguf/build/cpu/bin/server gguf/build/cpu/bin/ollama-runner
+//go:generate rm -f gguf/examples/server/server.h
+//go:generate git -C gguf apply ../patches/0001-Expose-callable-API-for-server.patch
 
 //go:generate cmake -S ggml -B ggml/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on
 //go:generate cmake --build ggml/build/cuda --target server --config Release
 //go:generate mv ggml/build/cuda/bin/server ggml/build/cuda/bin/ollama-runner
-//go:generate cmake -S gguf -B gguf/build/cuda -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off -DLLAMA_CUDA_PEER_MAX_BATCH_SIZE=0
-//go:generate cmake --build gguf/build/cuda --target server --config Release
-//go:generate mv gguf/build/cuda/bin/server gguf/build/cuda/bin/ollama-runner
+//go:generate cmake -S gguf -B gguf/build/cuda -DCMAKE_VERBOSE_MAKEFILE=on -DCMAKE_BUILD_TYPE=Debug -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off
+//go:generate cmake --build gguf/build/cuda --target server --target ggml --target ggml_static --target llama --target build_info --target common --target ext_server --config Release

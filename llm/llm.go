@@ -82,7 +82,8 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 		opts.NumGQA = 0
 		opts.RopeFrequencyBase = 0.0
 		opts.RopeFrequencyScale = 0.0
-		return newLlama(model, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
+		// return newLlama(model, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
+		return newLlamaExtServer(model, adapters, ggml.NumLayers(), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
 		return newLlama(model, adapters, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
 	default:
