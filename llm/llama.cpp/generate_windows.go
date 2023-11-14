@@ -10,7 +10,8 @@ package llm
 //go:generate cmd /c move ggml\build\cpu\bin\Release\server.exe ggml\build\cpu\bin\Release\ollama-runner.exe
 
 //go:generate git submodule update --force gguf
-//go:generate git -C gguf apply ../patches/0001-update-default-log-target.patch
-//go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_K_QUANTS=on -DLLAMA_NATIVE=off -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off
-//go:generate cmake --build gguf/build/cpu --target server --config Release
-//go:generate cmd /c move gguf\build\cpu\bin\Release\server.exe gguf\build\cpu\bin\Release\ollama-runner.exe
+//go:generate powershell -c "rm -erroraction ignore -path gguf/examples/server/server.h; exit(0)"
+//go:generate git -C gguf apply ../patches/0001-Expose-callable-API-for-server.patch
+// go:generate cmake -S gguf -B gguf/build/wincuda -DCMAKE_VERBOSE_MAKEFILE=ON -DBUILD_SHARED_LIBS=on -A x64 -DLLAMA_CUBLAS=on -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DLLAMA_AVX=on -DLLAMA_AVX2=off -DLLAMA_AVX512=off -DLLAMA_FMA=off -DLLAMA_F16C=off
+//go:generate cmake -S gguf -B gguf/build/wincuda -DLLAMA_CUBLAS=ON -DCMAKE_VERBOSE_MAKEFILE=ON -DBUILD_SHARED_LIBS=on -A x64
+//go:generate cmake --build gguf/build/wincuda --target server --target llava_shared --target ggml_shared --target llama --target build_info --target common --target ext_server_shared --config Release

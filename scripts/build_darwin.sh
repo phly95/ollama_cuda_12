@@ -9,7 +9,7 @@ mkdir -p dist
 
 for TARGETARCH in arm64 amd64; do
     GOOS=darwin GOARCH=$TARGETARCH go generate ./...
-    GOOS=darwin GOARCH=$TARGETARCH go build -o dist/ollama-darwin-$TARGETARCH
+    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -o dist/ollama-darwin-$TARGETARCH
 done
 
 lipo -create -output dist/ollama dist/ollama-darwin-*

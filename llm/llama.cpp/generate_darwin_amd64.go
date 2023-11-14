@@ -12,8 +12,7 @@ package llm
 //go:generate mv ggml/build/cpu/bin/server ggml/build/cpu/bin/ollama-runner
 
 //go:generate git submodule update --force gguf
-//go:generate git -C gguf apply ../patches/0001-update-default-log-target.patch
-//go:generate git -C gguf apply ../patches/0001-metal-handle-ggml_scale-for-n-4-0-close-3754.patch
-//go:generate cmake -S gguf -B gguf/build/cpu -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
-//go:generate cmake --build gguf/build/cpu --target server --config Release
-//go:generate mv gguf/build/cpu/bin/server gguf/build/cpu/bin/ollama-runner
+//go:generate rm -f gguf/examples/server/server.h
+//go:generate git -C gguf apply ../patches/0001-Expose-callable-API-for-server.patch
+//go:generate cmake -S gguf -B gguf/build/cpu -DCMAKE_BUILD_TYPE=Debug -DLLAMA_METAL=off -DLLAMA_ACCELERATE=on -DLLAMA_K_QUANTS=on -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+//go:generate cmake --build gguf/build/cpu --target ggml --target ggml_static --target llama --target build_info --target common --target ext_server --config Release
