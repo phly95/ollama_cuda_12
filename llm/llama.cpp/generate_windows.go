@@ -1,3 +1,3 @@
 package llm
 
-//go:generate powershell -ExecutionPolicy Bypass -File ../../scripts/gen_windows.ps1
+//go:generate powershell -ExecutionPolicy Bypass -File ./gen_windows.ps1

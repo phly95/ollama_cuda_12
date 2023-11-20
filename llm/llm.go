@@ -18,7 +18,6 @@ type LLM interface {
 	Embedding(context.Context, string) ([]float64, error)
 	Encode(context.Context, string) ([]int, error)
 	Decode(context.Context, []int) (string, error)
-	SetOptions(api.Options)
 	Close()
 	Ping(context.Context) error
 }
@@ -85,7 +84,7 @@ func New(workDir, model string, adapters []string, opts api.Options) (LLM, error
 		// return newLlama(model, adapters, chooseRunners(workDir, "gguf"), ggml.NumLayers(), opts)
 		return newLlamaExtServer(model, adapters, ggml.NumLayers(), opts)
 	case "ggml", "ggmf", "ggjt", "ggla":
-		return newLlama(model, adapters, chooseRunners(workDir, "ggml"), ggml.NumLayers(), opts)
+		return nil, fmt.Errorf("ggml model format no longer supported.  Please upgrade your model <URL here>")
 	default:
 		return nil, fmt.Errorf("unknown ggml type: %s", ggml.ModelFamily())
 	}

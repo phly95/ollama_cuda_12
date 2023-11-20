@@ -2,12 +2,12 @@ package llm
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common
-#cgo CFLAGS: -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
+#cgo CFLAGS: -DNDEBUG -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
 #cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
-#cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL
+#cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL -DGGML_METAL_NDEBUG
 #cgo darwin LDFLAGS: -lc++ -framework Accelerate
 #cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
 #cgo darwin,arm64 LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/metal/common/libcommon.a
@@ -86,17 +86,9 @@ func newLlamaExtServer(model string, adapters []string, numLayers int64, opts ap
 	sparams.main_gpu = C.int(opts.MainGPU)
 	sparams.n_parallel = 1 // TODO - wire up concurrency
 
-	if opts.RopeFrequencyBase > 0 {
-		sparams.rope_freq_base = C.float(opts.RopeFrequencyBase)
-	} else {
-		sparams.rope_freq_base = 0.0
-	}
-
-	if opts.RopeFrequencyScale > 0 {
-		sparams.rope_freq_scale = C.float(opts.RopeFrequencyScale)
-	} else {
-		sparams.rope_freq_scale = 0.0
-	}
+	// Always use the value encoded in the model
+	sparams.rope_freq_base = 0.0
+	sparams.rope_freq_scale = 0.0
 
 	sparams.lora_adapters = nil
 	for i := 0; i < len(adapters); i++ {
@@ -328,9 +320,4 @@ func (llm *llamaExtServer) Ping(ctx context.Context) error {
 
 func (llm *llamaExtServer) Close() {
 	C.llama_server_stop()
-}
-
-func (llm *llamaExtServer) SetOptions(opts api.Options) {
-	// TODO - this wont actually do anything at this point...
-	llm.Options = opts
 }
