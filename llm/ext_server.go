@@ -1,12 +1,10 @@
 package llm
 
 /*
-#cgo CFLAGS: -g -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common
+#cgo CFLAGS: -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common
 #cgo CFLAGS: -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
-#cgo CFLAGS: -DSERVER_VERBOSE=1
 #cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
 #cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
-#cgo CPPFLAGS: -DNDEBUG -DGGML_USE_K_QUANTS
 #cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #cgo darwin CPPFLAGS:  -DGGML_USE_ACCELERATE
 #cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL
