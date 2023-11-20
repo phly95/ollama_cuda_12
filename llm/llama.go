@@ -55,7 +55,7 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
 ws ::= ([ \t\n] ws)?
 `
 
-//go:embed llama.cpp/*/build/*/bin/*
+// go:embed llama.cpp/*/build/*/bin/*
 var llamaCppEmbed embed.FS
 
 type ModelRunner struct {
