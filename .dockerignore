@@ -5,3 +5,4 @@ dist
 llm/llama.cpp/ggml
 llm/llama.cpp/gguf
 .env
+test_data

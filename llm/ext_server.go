@@ -49,6 +49,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/jmorganca/ollama/api"
@@ -67,7 +68,14 @@ type llamaExtServer struct {
 	api.Options
 }
 
+// Note: current implementation does not support concurrent instantiations
+var mutex sync.Mutex
+
 func newLlamaExtServer(model string, adapters []string, numLayers int64, opts api.Options) (*llamaExtServer, error) {
+	if !mutex.TryLock() {
+		log.Printf("concurrent llm servers not yet supported, waiting for prior server to complete")
+		mutex.Lock()
+	}
 	server := &llamaExtServer{opts}
 	fileInfo, err := os.Stat(model)
 	if err != nil {
@@ -242,7 +250,11 @@ func (llm *llamaExtServer) Predict(ctx context.Context, prevContext []int, promp
 			if result.stop {
 				return nil
 			} else if result.error {
-				return fmt.Errorf("error processing completion")
+				msg := ""
+				if result.result_json != nil {
+					msg = C.GoString(result.result_json)
+				}
+				return fmt.Errorf("error processing completion %s", msg)
 			}
 		}
 	}
@@ -326,6 +338,7 @@ func (llm *llamaExtServer) Ping(ctx context.Context) error {
 
 func (llm *llamaExtServer) Close() {
 	C.llama_server_stop()
+	mutex.Unlock()
 }
 
 func (llm *llamaExtServer) SetOptions(opts api.Options) {
