@@ -2,72 +2,95 @@ package server
 
 import (
 	"context"
-	"errors"
-	"os"
-	"path"
-	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/llm"
 )
 
 // TODO - this would ideally be in the llm package, but that would require some refactoring of interfaces in the server
 //        package to avoid circular dependencies
 
-func TestIntegrationOrcaMini(t *testing.T) {
-	pwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get pwd failed: %s", err)
+var (
+	req = [2]api.GenerateRequest{
+		{
+			Model:   "orca-mini",
+			Prompt:  "tell me a short story about agi?",
+			Options: map[string]interface{}{},
+		}, {
+			Model:   "orca-mini",
+			Prompt:  "what is the origin of the us thanksgiving holiday?",
+			Options: map[string]interface{}{},
+		},
 	}
+	resp = [2]string{
+		"once upon a time",
+		"english colonists who",
+	}
+)
 
-	req := api.GenerateRequest{
-		Model:   "orca-mini",
-		Prompt:  "hello world",
-		Options: map[string]interface{}{},
-	}
-
-	// TODO - add logic to check for existence of test data else skip this test
-	_, filename, _, _ := runtime.Caller(0)
-	modelDir := path.Dir(path.Dir(filename) + "/../test_data/models/.")
-	if _, err := os.Stat(modelDir); errors.Is(err, os.ErrNotExist) {
-		t.Skipf("%s does not exist - skipping integration tests", modelDir)
-	}
-	os.Setenv("OLLAMA_MODELS", modelDir)
-	model, err := GetModel(req.Model)
-	if err != nil {
-		t.Fatalf("GetModel failed: %s", err)
-	}
-	opts := api.DefaultOptions()
-	llmRunner, err := llm.New("unused", model.ModelPath, model.AdapterPaths, opts)
-	if err != nil {
-		t.Fatalf("llm.New failed (%s): %s", pwd, err)
-	}
-	prompt, err := model.Prompt(req)
-	if err != nil {
-		t.Fatalf("prompt generation failed: %s", err)
-	}
-	success := make(chan bool, 1)
-	response := ""
-	cb := func(resp api.GenerateResponse) {
-		response += resp.Response
-		if resp.Done {
-			success <- true
-		}
-	}
+func TestIntegrationSimpleOrcaMini(t *testing.T) {
+	SkipIFNoTestData(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
 	defer cancel()
-	err = llmRunner.Predict(ctx, []int{}, prompt, "", cb)
-	if err != nil {
-		t.Fatalf("predict call failed: %s", err)
-	}
-
-	select {
-	case <-ctx.Done():
-		t.Fatalf("failed to complete before timeout: \n%s", response)
-	case <-success:
-		// TODO - what sort of additional checks should we put here?
-		t.Logf("Completed:\n%s", response)
-	}
+	opts := api.DefaultOptions()
+	opts.Temperature = 0.0
+	model, llmRunner := PrepareModelForPrompts(t, req[0].Model, opts)
+	defer llmRunner.Close()
+	response := OneShotPromptResponse(t, ctx, req[0], model, llmRunner)
+	assert.Contains(t, strings.ToLower(response), resp[0])
 }
+
+// TODO
+// The server always loads a new runner and closes the old one, which forces serial execution
+// At present this test case fails with concurrency problems.  Eventually we should try to
+// get true concurrency working with n_parallel support in the backend
+func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
+	SkipIFNoTestData(t)
+	t.Skip("concurrent prediction on single runner not currently supported")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	defer cancel()
+	opts := api.DefaultOptions()
+	opts.Temperature = 0.0
+	var wg sync.WaitGroup
+	wg.Add(len(req))
+	model, llmRunner := PrepareModelForPrompts(t, req[0].Model, opts)
+	defer llmRunner.Close()
+	for i := 0; i < len(req); i++ {
+		go func(i int) {
+			defer wg.Done()
+			response := OneShotPromptResponse(t, ctx, req[i], model, llmRunner)
+			t.Logf("Prompt: %s\nResponse: %s", req[0].Prompt, response)
+			assert.Contains(t, strings.ToLower(response), resp[i], "error in thread %d (%s)", i, req[i].Prompt)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestIntegrationConcurrentRunnersOrcaMini(t *testing.T) {
+	SkipIFNoTestData(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+	defer cancel()
+	opts := api.DefaultOptions()
+	opts.Temperature = 0.0
+	var wg sync.WaitGroup
+	wg.Add(len(req))
+
+	for i := 0; i < len(req); i++ {
+		go func(i int) {
+			defer wg.Done()
+			model, llmRunner := PrepareModelForPrompts(t, req[0].Model, opts)
+			defer llmRunner.Close()
+			response := OneShotPromptResponse(t, ctx, req[i], model, llmRunner)
+			t.Logf("Prompt: %s\nResponse: %s", req[0].Prompt, response)
+			assert.Contains(t, strings.ToLower(response), resp[i], "error in thread %d (%s)", i, req[i].Prompt)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// TODO - create a parallel test with 2 different models once we support concurrency
