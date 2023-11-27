@@ -1,7 +1,7 @@
 package llm
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common
+#cgo CFLAGS: -I${SRCDIR}/llama.cpp/ -I${SRCDIR}/llama.cpp/gguf -I${SRCDIR}/llama.cpp/gguf/common
 #cgo CFLAGS: -DLLAMA_SERVER_LIBRARY=1 -D_XOPEN_SOURCE=600 -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo CFLAGS: -Wmissing-noreturn -Wall -Wextra -Wcast-qual -Wno-unused-function -Wno-array-bounds
 #cgo CPPFLAGS: -Ofast -Wall -Wextra -Wno-unused-function -Wno-unused-variable -Wno-deprecated-declarations -Wno-unused-but-set-variable
@@ -20,22 +20,12 @@ package llm
 #cgo darwin,amd64 LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cpu/libggml_static.a
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux windows CFLAGS: -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_MMV_Y=1 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_USE_CUBLAS
-#cgo linux LDFLAGS: -L/usr/local/cuda/targets/x86_64-linux/lib -L/usr/local/cuda/lib64 -L/usr/local/cuda/targets/x86_64-linux/lib/stubs
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cuda/examples/server/libext_server.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cuda/common/libcommon.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cuda/libllama.a
-#cgo linux LDFLAGS: ${SRCDIR}/llama.cpp/gguf/build/cuda/libggml_static.a
-#cgo linux LDFLAGS: /usr/local/cuda/lib64/libcudart_static.a
-#cgo linux LDFLAGS: /usr/local/cuda/lib64/libcublas_static.a
-#cgo linux LDFLAGS: /usr/local/cuda/lib64/libcublasLt_static.a
-#cgo linux LDFLAGS: /usr/local/cuda/lib64/libcudadevrt.a
-#cgo linux LDFLAGS: /usr/local/cuda/lib64/libculibos.a
+#cgo linux LDFLAGS: -L${SRCDIR}/llama.cpp/ -lcuda_server
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 #cgo windows LDFLAGS: -L${SRCDIR}/llama.cpp/gguf/build/wincuda/dist/bin
 #cgo windows LDFLAGS: -lext_server_shared -lpthread
 
-#include <stdlib.h>
-#include "examples/server/server.h"
+#include "wrap_server.h"
 
 */
 import "C"
@@ -146,13 +136,13 @@ func newLlamaExtServer(model string, adapters []string, numLayers int64, opts ap
 	}
 
 	log.Printf("Initializing internal llama server")
-	err = errWrap(C.llama_server_init(&sparams))
+	err = errWrap(C.cuda_llama_server_init(&sparams))
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("Starting internal llama main loop")
-	C.llama_server_start()
+	C.cuda_llama_server_start()
 	return server, nil
 }
 
@@ -206,7 +196,7 @@ func (llm *llamaExtServer) Predict(ctx context.Context, prevContext []int, promp
 	req := C.CString(buffer.String())
 	defer C.free(unsafe.Pointer(req))
 
-	cmpCtx := C.llama_server_completion(req)
+	cmpCtx := C.cuda_llama_server_completion(req)
 	if cmpCtx.task_id < 0 {
 		defer C.free(unsafe.Pointer(cmpCtx.err))
 		return fmt.Errorf(C.GoString(cmpCtx.err))
@@ -216,15 +206,15 @@ func (llm *llamaExtServer) Predict(ctx context.Context, prevContext []int, promp
 		select {
 		case <-ctx.Done():
 			// This handles the request cancellation
-			return errWrap(C.llama_server_completion_cancel(cmpCtx.task_id))
+			return errWrap(C.cuda_llama_server_completion_cancel(cmpCtx.task_id))
 		default:
-			result := C.llama_server_completion_next_result(cmpCtx.task_id)
+			result := C.cuda_llama_server_completion_next_result(cmpCtx.task_id)
 			if result.result_json != nil {
 				defer C.free(unsafe.Pointer(result.result_json))
 			}
 			var p prediction
 			if err := json.Unmarshal([]byte(C.GoString(result.result_json)), &p); err != nil {
-				err2 := errWrap(C.llama_server_completion_cancel(cmpCtx.task_id))
+				err2 := errWrap(C.cuda_llama_server_completion_cancel(cmpCtx.task_id))
 				return errors.Join(fmt.Errorf("error unmarshaling llm prediction response: %w", err), err2)
 			}
 
@@ -235,7 +225,7 @@ func (llm *llamaExtServer) Predict(ctx context.Context, prevContext []int, promp
 
 			embd, err := llm.Encode(ctx, nextContext.String())
 			if err != nil {
-				err2 := errWrap(C.llama_server_completion_cancel(cmpCtx.task_id))
+				err2 := errWrap(C.cuda_llama_server_completion_cancel(cmpCtx.task_id))
 				return errors.Join(fmt.Errorf("encoding context: %w", err), err2)
 			}
 
@@ -268,7 +258,7 @@ func (llm *llamaExtServer) Encode(ctx context.Context, prompt string) ([]int, er
 	req := C.CString(string(data))
 	defer C.free(unsafe.Pointer(req))
 	var resp C.ext_server_resp
-	err = errWrap(C.llama_server_tokenize(req, &resp))
+	err = errWrap(C.cuda_llama_server_tokenize(req, &resp))
 	if resp.json_resp != nil {
 		defer C.free(unsafe.Pointer(resp.json_resp))
 	}
@@ -293,7 +283,7 @@ func (llm *llamaExtServer) Decode(ctx context.Context, tokens []int) (string, er
 	req := C.CString(string(data))
 	defer C.free(unsafe.Pointer(req))
 	var resp C.ext_server_resp
-	err = errWrap(C.llama_server_detokenize(req, &resp))
+	err = errWrap(C.cuda_llama_server_detokenize(req, &resp))
 	if resp.json_resp != nil {
 		defer C.free(unsafe.Pointer(resp.json_resp))
 	}
@@ -315,7 +305,7 @@ func (llm *llamaExtServer) Embedding(ctx context.Context, input string) ([]float
 	req := C.CString(string(data))
 	defer C.free(unsafe.Pointer(req))
 	var resp C.ext_server_resp
-	err = errWrap(C.llama_server_embedding(req, &resp))
+	err = errWrap(C.cuda_llama_server_embedding(req, &resp))
 	if resp.json_resp != nil {
 		defer C.free(unsafe.Pointer(resp.json_resp))
 	}
@@ -337,7 +327,7 @@ func (llm *llamaExtServer) Ping(ctx context.Context) error {
 }
 
 func (llm *llamaExtServer) Close() {
-	C.llama_server_stop()
+	C.cuda_llama_server_stop()
 	mutex.Unlock()
 }
 
