@@ -1,3 +1,5 @@
+//go:build !rocm && !cuda
+
 package llm
 
-//go:generate sh ./gen_linux.sh
+//go:generate bash -c "export GPU_TYPE=cpu; ./gen_linux.sh"

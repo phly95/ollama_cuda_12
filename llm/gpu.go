@@ -20,7 +20,15 @@ import "C"
 
 // CheckVRAM returns the free VRAM in bytes on Linux machines with NVIDIA GPUs
 func CheckVRAM() (int64, error) {
-	return int64(C.check_vram()), nil
+	log.Printf("About to check for available memory\n")
+	mem := int64(C.check_vram())
+	if mem <= 0 {
+		// TODO - temp hack
+		log.Printf("Returning bogus memory available\n")
+		return 25753026560, nil
+	}
+	log.Printf("Returning actual memory available\n")
+	return mem, nil
 }
 
 func NumGPU(numLayer, fileSizeBytes int64, opts api.Options) int {

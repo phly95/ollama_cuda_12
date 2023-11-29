@@ -29,6 +29,10 @@ apply_patches() {
 }
 
 build() {
-    cmake -S gguf -B ${BUILD_DIR} ${CMAKE_DEFS}
-    cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8 
+    # cmake -S gguf -B ${BUILD_DIR} ${CMAKE_DEFS}
+    # cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8 
+    
+    # HACK
+    CC=/opt/rocm/llvm/bin/clang CXX=/opt/rocm/llvm/bin/clang++ cmake -S gguf -B ${BUILD_DIR} -DLLAMA_HIPBLAS=ON
+    cmake --build ${BUILD_DIR} ${CMAKE_TARGETS}
 }
