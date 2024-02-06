@@ -90,6 +90,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 
 	go func() {
 		// Keep the server running unless we're shuttind down the app
+		crashCount := 0
 		for {
 			cmd.Wait() //nolint:errcheck
 			stdin.Close()
@@ -100,44 +101,35 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 
 			select {
 			case <-ctx.Done():
-				slog.Debug(fmt.Sprintf("XXX Shutting down - server exited with %d", code))
+				slog.Debug(fmt.Sprintf("server shutdown with exit code %d", code))
 				done <- code
 				return
 			default:
-				slog.Debug(fmt.Sprintf("XXX Respawning server after exit with %d", code))
+				crashCount++
+				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
 				// TODO maybe backoff in case we're crashlooping?
 				time.Sleep(500 * time.Millisecond)
 				if err := cmd.Start(); err != nil {
-					slog.Debug(fmt.Sprintf("failed to restart server %s", err))
-					done <- code
-					return
+					slog.Error(fmt.Sprintf("failed to restart server %s", err))
+					// Keep trying, but back off if we keep failing
+					time.Sleep(time.Duration(crashCount) * time.Second)
 				}
 			}
 		}
 	}()
-	// This shouldn't be needed if we can avoid spawning cmd as an intermediary
-	// go func() {
-	// 	// If we're shutting down, make sure we kill the server and don't leave it running
-	// 	select {
-	// 	case <-ctx.Done():
-	// 		if cmd.Process != nil {
-	// 			slog.Debug(fmt.Sprintf("Sending kill signal to server with pid %d", cmd.Process.Pid))
-	// 			cmd.Process.Signal(syscall.SIGKILL)
-	// 		}
-	// 	}
-	// }()
 	return done, nil
 }
 
 func IsServerRunning(ctx context.Context) bool {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		slog.Debug(fmt.Sprintf("XXX unable to connect to client: %s", err))
+		slog.Info("unable to connect to server")
 		return false
 	}
 	err = client.Heartbeat(ctx)
 	if err != nil {
-		slog.Debug(fmt.Sprintf("XXX unable to get heartbeat from server: %s", err))
+		slog.Debug(fmt.Sprintf("heartbeat from server: %s", err))
+		slog.Info("unable to connect to server")
 		return false
 	}
 	return true

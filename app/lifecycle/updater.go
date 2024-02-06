@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -54,7 +53,6 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	if err != nil {
 		slog.Info(fmt.Sprintf("failed to sign update request %s", err))
 	}
-	slog.Debug(fmt.Sprintf("XXX checking for update via %s - %v", updateCheckURL, headers))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, updateCheckURL, nil)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
@@ -64,6 +62,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 	client := getClient(req)
 
+	slog.Debug(fmt.Sprintf("checking for available update at %s with headers %v", updateCheckURL, headers))
 	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("failed to check for update: %s", err))
@@ -72,40 +71,42 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 204 {
-		slog.Debug("XXX got 204 when checking for update")
+		slog.Debug("check update response 204 (current version is up to date)")
 		return false, updateResp
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		slog.Debug(fmt.Sprintf("XXX failed to read body response: %s", err))
+		slog.Warn(fmt.Sprintf("failed to read body response: %s", err))
 	}
 	err = json.Unmarshal(body, &updateResp)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("malformed response checking for update: %s", err))
 		return false, updateResp
 	}
-	// Extract the version string from the URL
+	// Extract the version string from the URL in the github release artifact path
 	updateResp.UpdateVersion = path.Base(path.Dir(updateResp.UpdateURL))
 
 	slog.Info("New update available at " + updateResp.UpdateURL)
 	return true, updateResp
 }
 
-func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
+// Returns true if we downloaded a new update, false if we already had it
+func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, error) {
 	// Do a head first to check etag info
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Rate limiting and private repo support
 	token := os.Getenv("GITHUB_TOKEN")
 	if token != "" {
+		slog.Info("using GITHUB_TOKEN for update download")
 		req.Header.Add("Authorization", "Bearer "+token)
 	}
 	client := getClient(req)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error checking update: %w", err)
+		return false, fmt.Errorf("error checking update: %w", err)
 	}
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("etag"), "\"")
@@ -120,13 +121,12 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	}
 
 	stageFilename := filepath.Join(UpdateStageDir, etag, filename)
-	slog.Debug("XXX update will be staged as " + stageFilename)
 
 	// Check to see if we already have it downloaded
 	_, err = os.Stat(stageFilename)
 	if err == nil {
 		slog.Debug("update already downloaded")
-		return nil
+		return false, nil
 	}
 
 	cleanupOldDownloads()
@@ -134,7 +134,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	req.Method = http.MethodGet
 	resp, err = client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error checking update: %w", err)
+		return false, fmt.Errorf("error checking update: %w", err)
 	}
 	defer resp.Body.Close()
 	etag = strings.Trim(resp.Header.Get("etag"), "\"")
@@ -148,26 +148,26 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	_, err = os.Stat(filepath.Dir(stageFilename))
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
-			return fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
+			return false, fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
 		}
 	}
 
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read body response: %w", err)
+		return false, fmt.Errorf("failed to read body response: %w", err)
 	}
 	fp, err := os.OpenFile(stageFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		return fmt.Errorf("write payload %s: %w", stageFilename, err)
+		return false, fmt.Errorf("write payload %s: %w", stageFilename, err)
 	}
 	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
-		return fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
+		return false, fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
 	}
-	slog.Debug("new update downloaded " + stageFilename)
+	slog.Info("new update downloaded " + stageFilename)
 
 	UpdateDownloaded = true
-	return nil
+	return true, nil
 }
 
 func cleanupOldDownloads() {
@@ -195,76 +195,26 @@ func StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
 		for {
 			available, resp := IsNewReleaseAvailable(ctx)
 			if available {
-				err := DownloadNewRelease(ctx, resp)
+				downloaded, err := DownloadNewRelease(ctx, resp)
 				if err != nil {
 					slog.Error(fmt.Sprintf("failed to download new release: %s", err))
 				}
-				err = cb(resp.UpdateVersion)
-				if err != nil {
-					slog.Debug("XXX failed to register update available with tray")
+				if downloaded {
+					// Only pop up the update banner if we downloaded fresh bits
+					// TODO - maybe consider ~daily nags if they haven't clicked upgrade?
+					err = cb(resp.UpdateVersion)
+					if err != nil {
+						slog.Warn(fmt.Sprintf("failed to register update available with tray: %s", err))
+					}
 				}
 			}
 			select {
 			case <-ctx.Done():
-				slog.Debug("XXX stopping background update checker")
+				slog.Debug("stopping background update checker")
 				return
 			default:
 				time.Sleep(60 * 60 * time.Second)
 			}
 		}
 	}()
-}
-
-func DoUpgrade() error {
-	files, err := filepath.Glob(filepath.Join(UpdateStageDir, "*", "*.exe")) // TODO generalize for multiplatform
-	if err != nil {
-		return fmt.Errorf("failed to lookup downloads: %s", err)
-	}
-	if len(files) == 0 {
-		return fmt.Errorf("no update downloads found")
-	} else if len(files) > 1 {
-		// Shouldn't happen
-		slog.Warn(fmt.Sprintf("multiple downloads found %v", files))
-	}
-	installerExe := files[0]
-
-	slog.Info("starting upgrade with " + installerExe)
-	slog.Info("upgrade log file " + UpgradeLogFile)
-
-	installArgs := []string{
-		"/CLOSEAPPLICATIONS",                    // Quit the tray app if it's still running
-		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
-		// "/FORCECLOSEAPPLICATIONS", // Force close the tray app - might be needed
-	}
-	// In debug mode, let the installer show to aid in troubleshooting if something goes wrong
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug == "" {
-		installArgs = append(installArgs,
-			"/SP", // Skip the "This will install... Do you wish to continue" prompt
-			"/SUPPRESSMSGBOXES",
-			"/SILENT",
-			"/VERYSILENT",
-		)
-	}
-	slog.Debug(fmt.Sprintf("Upgrade: %s %v", installerExe, installArgs))
-	os.Chdir(filepath.Dir(UpgradeLogFile)) //nolint:errcheck
-	cmd := exec.Command(installerExe, installArgs...)
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
-	}
-
-	if cmd.Process != nil {
-		err = cmd.Process.Release()
-		if err != nil {
-			slog.Error(fmt.Sprintf("failed to release server process: %s", err))
-		}
-	} else {
-		// TODO - some details about why it didn't start, or is this a pedantic error case?
-		return fmt.Errorf("installer process did not start")
-	}
-	slog.Info("Installer started in background, exiting")
-
-	os.Exit(0)
-	// Not reached
-	return nil
 }

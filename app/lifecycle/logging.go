@@ -1,14 +1,13 @@
 package lifecycle
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 )
 
-func InitLogging(filename string) {
+func InitLogging() {
 	// level := slog.LevelInfo
 
 	// TODO once things are solid, wire this up to quiet logs down by default
@@ -17,21 +16,14 @@ func InitLogging(filename string) {
 	// }
 
 	var logFile *os.File
+	var err error
 	// Detect if we're a GUI app on windows, and if not, send logs to console
 	if os.Stderr.Fd() != 0 {
 		// Console app detected
 		logFile = os.Stderr
 		// TODO - write one-line to the app.log file saying we're running in console mode to help avoid confusion
 	} else {
-		_, err := os.Stat(AppDataDir)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
-				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
-				return
-			}
-		}
-		logFilename := filepath.Join(AppDataDir, filename)
-		logFile, err = os.OpenFile(logFilename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+		logFile, err = os.OpenFile(AppLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
 		if err != nil {
 			slog.Error(fmt.Sprintf("failed to create server log %v", err))
 			return

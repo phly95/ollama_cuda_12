@@ -5,43 +5,34 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"runtime"
 
 	"github.com/jmorganca/ollama/app/store"
 	"github.com/jmorganca/ollama/app/tray"
 )
 
-func GetOllamaName() string {
-	if runtime.GOOS == "windows" {
-		return "ollama.exe"
-	} else {
-		return "ollama"
-	}
-}
-
 func Run() {
-	InitLogging("app.log")
+	InitLogging()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var done chan int
 
-	t, err := tray.NewTray(DoUpgrade)
+	t, err := tray.NewTray()
 	if err != nil {
 		log.Fatalf("Failed to start: %s", err)
 	}
 	callbacks := t.GetCallbacks()
 
 	go func() {
-		slog.Debug("XXX starting callback handler")
+		// slog.Debug("XXX starting callback handler")
 		for {
 			select {
 			case <-callbacks.Quit:
 				slog.Debug("QUIT called")
 				t.Quit()
 			case <-callbacks.Update:
-				slog.Debug("XXX about to call DoUpgrade")
-				err := DoUpgrade()
+				err := DoUpgrade(cancel, done)
 				if err != nil {
-					slog.Debug(fmt.Sprintf("DoUpgrade FAILED: %s", err))
+					slog.Warn(fmt.Sprintf("upgrade attempt failed: %s", err))
 				}
 			case <-callbacks.ShowLogs:
 				ShowLogs()
@@ -67,7 +58,6 @@ func Run() {
 		slog.Debug("Not first time, skipping first run notification")
 	}
 
-	var done chan int
 	if IsServerRunning(ctx) {
 		slog.Debug("XXX detected server already running")
 		// TODO - should we fail fast, try to kill it, or just ignore?

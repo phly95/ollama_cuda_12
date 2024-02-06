@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ var (
 	AppDataDir = "/opt/Ollama"
 	// TODO - should there be a distinct log dir?
 	UpdateStageDir = "/tmp"
+	AppLogFile     = "/tmp/ollama_app.log"
 	ServerLogFile  = "/tmp/ollama.log"
 	UpgradeLogFile = "/tmp/ollama_update.log"
 	Installer      = "OllamaSetup.exe"
@@ -29,6 +31,7 @@ func init() {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		AppDataDir = filepath.Join(localAppData, "Ollama")
 		UpdateStageDir = filepath.Join(AppDataDir, "updates")
+		AppLogFile = filepath.Join(AppDataDir, "app.log")
 		ServerLogFile = filepath.Join(AppDataDir, "server.log")
 		UpgradeLogFile = filepath.Join(AppDataDir, "upgrade.log")
 
@@ -56,6 +59,14 @@ func init() {
 			err := os.Setenv("PATH", pathVal)
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to update PATH: %s", err))
+			}
+		}
+
+		// Make sure our logging dir exists
+		_, err := os.Stat(AppDataDir)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
+				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
 			}
 		}
 
