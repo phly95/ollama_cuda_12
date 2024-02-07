@@ -32,14 +32,15 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
 	}
 	// When we're not in debug mode, make the upgrade as quiet as possible (no GUI, no prompts)
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug == "" {
-		installArgs = append(installArgs,
-			"/SP", // Skip the "This will install... Do you wish to continue" prompt
-			"/SUPPRESSMSGBOXES",
-			"/SILENT",
-			"/VERYSILENT",
-		)
-	}
+	// TODO - temporarily disable since we're pinning in debug mode for the preview
+	// if debug := os.Getenv("OLLAMA_DEBUG"); debug == "" {
+	installArgs = append(installArgs,
+		"/SP", // Skip the "This will install... Do you wish to continue" prompt
+		"/SUPPRESSMSGBOXES",
+		"/SILENT",
+		"/VERYSILENT",
+	)
+	// }
 
 	// Safeguard in case we have requests in flight that need to drain...
 	slog.Info("Waiting for server to shutdown")
