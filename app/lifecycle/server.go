@@ -49,7 +49,6 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			return done, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
 		}
 	}
-	slog.Info(fmt.Sprintf("ollama server logs %s", ServerLogFile))
 
 	cmd := getCmd(ctx, getCLIFullPath(command))
 	// send stdout and stderr to a file
@@ -87,6 +86,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 	if cmd.Process != nil {
 		slog.Info(fmt.Sprintf("started ollama server with pid %d", cmd.Process.Pid))
 	}
+	slog.Info(fmt.Sprintf("ollama server logs %s", ServerLogFile))
 
 	go func() {
 		// Keep the server running unless we're shuttind down the app

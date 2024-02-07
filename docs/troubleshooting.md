@@ -21,11 +21,14 @@ docker logs <container-name>
 
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
 
-When you run Ollama on **Windows**, the GUI app and server logs go to `%LOCALAPPDATA%\Ollama` and additional
-debugging can be enabled by running the Tray app with the following
+When you run Ollama on **Windows**, there are a few different locations.  You can view them in the explorer window by hitting `<cmd>+R` and type in:
+- `explorer %LOCALAPPDATA%\Ollama` to view logs
+- `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
+- `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
+- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
+To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
 ```powershell
-# First quit the app if it's running via the tray icon menu
 $env:OLLAMA_DEBUG="1"
 & "ollama app.exe"
 ```

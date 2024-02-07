@@ -21,7 +21,7 @@ func (t *winTray) Run() {
 
 func nativeLoop() {
 	// Main message pump.
-	slog.Debug("XXX starting nativeLoop...")
+	slog.Debug("starting event handling loop")
 	m := &struct {
 		WindowHandle windows.Handle
 		Message      uint32
@@ -159,7 +159,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		case 0x404: // Middle click or close notification
 			// slog.Debug("doing nothing on close of first time notification")
 		default:
-			slog.Debug(fmt.Sprintf("unmanaged app specific message, lParm: 0x%x", lParam))
+			slog.Debug(fmt.Sprintf("unmanaged app message, lParm: 0x%x", lParam))
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
 		slog.Debug("XXX got taskbar created event")

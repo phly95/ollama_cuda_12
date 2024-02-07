@@ -97,16 +97,13 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, e
 	if err != nil {
 		return false, err
 	}
-	// Rate limiting and private repo support
-	token := os.Getenv("GITHUB_TOKEN")
-	if token != "" {
-		slog.Info("using GITHUB_TOKEN for update download")
-		req.Header.Add("Authorization", "Bearer "+token)
-	}
 	client := getClient(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("error checking update: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return false, fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("etag"), "\"")
@@ -172,8 +169,11 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, e
 
 func cleanupOldDownloads() {
 	files, err := os.ReadDir(UpdateStageDir)
-	if err != nil {
-		slog.Debug(fmt.Sprintf("failed to list stage dir: %s", err))
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		// Expected behavior on first run
+		return
+	} else if err != nil {
+		slog.Warn(fmt.Sprintf("failed to list stage dir: %s", err))
 		return
 	}
 	for _, file := range files {

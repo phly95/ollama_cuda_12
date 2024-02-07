@@ -23,7 +23,7 @@ func Run() {
 	callbacks := t.GetCallbacks()
 
 	go func() {
-		// slog.Debug("XXX starting callback handler")
+		slog.Debug("starting callback loop")
 		for {
 			select {
 			case <-callbacks.Quit:
@@ -37,7 +37,6 @@ func Run() {
 			case <-callbacks.ShowLogs:
 				ShowLogs()
 			case <-callbacks.DoFirstUse:
-				slog.Debug("Spawning getting started shell terminal")
 				err := GetStarted()
 				if err != nil {
 					slog.Warn(fmt.Sprintf("Failed to launch getting started shell: %s", err))
@@ -62,7 +61,6 @@ func Run() {
 		slog.Debug("XXX detected server already running")
 		// TODO - should we fail fast, try to kill it, or just ignore?
 	} else {
-		slog.Debug("XXX spawning server")
 		done, err = SpawnServer(ctx, CLIName)
 		if err != nil {
 			// TODO - should we retry in a backoff loop?
