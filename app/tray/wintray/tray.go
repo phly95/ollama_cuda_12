@@ -430,22 +430,22 @@ func (t *winTray) getVisibleItemIndex(parent, val uint32) int {
 }
 
 func (t *winTray) UpdateAvailable(ver string) error {
-	slog.Debug("XXX Running UpdateAvailable logic for tray")
+	slog.Debug("updating menu and sending notification for new update")
 	if err := t.addOrUpdateMenuItem(updatAvailableMenuID, 0, "An update is available", true); err != nil {
-		return fmt.Errorf("Unable to create menu entries %w\n", err)
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addOrUpdateMenuItem(UpdateMenuID, 0, "Restart to update", false); err != nil {
-		return fmt.Errorf("Unable to create menu entries %w\n", err)
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {
-		return fmt.Errorf("Unable to create menu entries %w\n", err)
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	iconFilePath, err := iconBytesToFilePath(wt.updateIcon)
 	if err != nil {
-		return fmt.Errorf("Unable to write icon data to temp file: %w", err)
+		return fmt.Errorf("unable to write icon data to temp file: %w", err)
 	}
 	if err := wt.setIcon(iconFilePath); err != nil {
-		return fmt.Errorf("Unable to set icon: %w", err)
+		return fmt.Errorf("unable to set icon: %w", err)
 	}
 
 	t.pendingUpdate = true

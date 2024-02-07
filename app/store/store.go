@@ -61,8 +61,10 @@ func initStore() {
 			slog.Debug(fmt.Sprintf("loaded existing store %s - ID: %s", getStorePath(), store.ID))
 			return
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		slog.Debug(fmt.Sprintf("unexpected error searching for store: %s", err))
 	}
-	slog.Debug(fmt.Sprintf("XXX initializing new store %s", err))
+	slog.Debug("initializing new store")
 	store.ID = uuid.New().String()
 	writeStore(getStorePath())
 }
@@ -72,10 +74,9 @@ func writeStore(storeFilename string) {
 	_, err := os.Stat(ollamaDir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(ollamaDir, 0o755); err != nil {
-			slog.Debug(fmt.Sprintf("create ollama dir %s: %v", ollamaDir, err))
+			slog.Error(fmt.Sprintf("create ollama dir %s: %v", ollamaDir, err))
 			return
 		}
-		slog.Debug(fmt.Sprintf("XXX created ollamaDir: %s", ollamaDir))
 	}
 	payload, err := json.Marshal(store)
 	if err != nil {
@@ -92,6 +93,6 @@ func writeStore(storeFilename string) {
 		slog.Error(fmt.Sprintf("write store payload %s: %d vs %d -- %v", storeFilename, n, len(payload), err))
 		return
 	}
-	slog.Debug("Store: " + string(payload))
+	slog.Debug("Store contents: " + string(payload))
 	slog.Info(fmt.Sprintf("wrote store: %s", storeFilename))
 }
