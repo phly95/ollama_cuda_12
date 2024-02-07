@@ -46,18 +46,13 @@ OutputDir=..\dist\
 ; Disable logging once everything's battle tested
 ; Filename will be %TEMP%\Setup Log*.txt
 SetupLogging=yes
-
-; TODO This still results in the user being prompted to close or not on ugprades which is messy
-;      Try to find a pattern (likely with code block) to shut down the app and server automatically
 CloseApplications=yes
 RestartApplications=no
 
 ; Make sure they can at least download llama2 as a minimum
 ExtraDiskSpaceRequired=3826806784
 
-; TODO Wire up custom image
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
-;WizardImageFile=.\assets\ollama.bmp
 WizardSmallImageFile=.\assets\ollama.bmp
 
 ; TODO verifty actual min windows version...
@@ -72,7 +67,7 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100
+; TODO - percentage can't be set less than 100, so how to make it shorter?
 ; WizardSizePercent=100,80
 
 [Languages]
@@ -89,7 +84,6 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {#MyIcon}
 
 [Run]
-; TODO consider starting a powershell window with a wall of text showing how to run ollama
 Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
