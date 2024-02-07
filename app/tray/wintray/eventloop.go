@@ -127,15 +127,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 		t.muNID.Unlock()
-		// TODO nuke this once we confirm we don't need any final callback cleanup logic
-		// slog.Debug("XXX would be doing exit callback here")
-		// systrayExit()
 	case t.wmSystrayMessage:
 		switch lParam {
 		case WM_MOUSEMOVE, WM_LBUTTONDOWN:
 			// Ignore these...
 		case WM_RBUTTONUP, WM_LBUTTONUP:
-			// slog.Debug("XXX showing menu")
 			err := t.showMenu()
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
@@ -159,6 +155,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		case 0x404: // Middle click or close notification
 			// slog.Debug("doing nothing on close of first time notification")
 		default:
+			// 0x402 also seems common - what is it?
 			slog.Debug(fmt.Sprintf("unmanaged app message, lParm: 0x%x", lParam))
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts

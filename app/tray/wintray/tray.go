@@ -23,8 +23,8 @@ const (
 	updatAvailableMenuID = 1
 	UpdateMenuID         = 2
 	separatorMenuID      = 3
-	LogsMenuID           = 4
-	GetStartedMenuID     = 5
+	LogsMenuID           = 4 // DEBUG
+	GetStartedMenuID     = 5 // DEBUG
 	QuitMenuID           = 6
 )
 
@@ -95,13 +95,15 @@ func InitTray(icon, updateIcon []byte) (*winTray, error) {
 		return nil, fmt.Errorf("Unable to set icon: %w", err)
 	}
 
-	if err := wt.addOrUpdateMenuItem(LogsMenuID, 0, "[EA] View diagnostic logs", false); err != nil {
-		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		if err := wt.addOrUpdateMenuItem(LogsMenuID, 0, logsMenuTitle, false); err != nil {
+			return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
+		}
+		if err := wt.addOrUpdateMenuItem(GetStartedMenuID, 0, getStartedMenuTitle, false); err != nil {
+			return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
+		}
 	}
-	if err := wt.addOrUpdateMenuItem(GetStartedMenuID, 0, "[EA] Get Started", false); err != nil {
-		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
-	}
-	if err := wt.addOrUpdateMenuItem(QuitMenuID, 0, "Quit Ollama", false); err != nil {
+	if err := wt.addOrUpdateMenuItem(QuitMenuID, 0, quitMenuTitle, false); err != nil {
 		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
 	}
 
@@ -255,7 +257,6 @@ type menuItemInfo struct {
 	BMPItem                     windows.Handle
 }
 
-// TODO try to combine with createMenu if possible...
 func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title string, disabled bool) error {
 	titlePtr, err := windows.UTF16PtrFromString(title)
 	if err != nil {
@@ -431,10 +432,10 @@ func (t *winTray) getVisibleItemIndex(parent, val uint32) int {
 
 func (t *winTray) UpdateAvailable(ver string) error {
 	slog.Debug("updating menu and sending notification for new update")
-	if err := t.addOrUpdateMenuItem(updatAvailableMenuID, 0, "An update is available", true); err != nil {
+	if err := t.addOrUpdateMenuItem(updatAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
-	if err := t.addOrUpdateMenuItem(UpdateMenuID, 0, "Restart to update", false); err != nil {
+	if err := t.addOrUpdateMenuItem(UpdateMenuID, 0, updateMenutTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {
@@ -463,7 +464,7 @@ func (t *winTray) UpdateAvailable(ver string) error {
 func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	bh := md5.Sum(iconBytes)
 	dataHash := hex.EncodeToString(bh[:])
-	iconFilePath := filepath.Join(os.TempDir(), "systray_temp_icon_"+dataHash)
+	iconFilePath := filepath.Join(os.TempDir(), "ollama_temp_icon_"+dataHash)
 
 	if _, err := os.Stat(iconFilePath); os.IsNotExist(err) {
 		if err := os.WriteFile(iconFilePath, iconBytes, 0644); err != nil {

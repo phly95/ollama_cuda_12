@@ -107,7 +107,6 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			default:
 				crashCount++
 				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
-				// TODO maybe backoff in case we're crashlooping?
 				time.Sleep(500 * time.Millisecond)
 				if err := cmd.Start(); err != nil {
 					slog.Error(fmt.Sprintf("failed to restart server %s", err))

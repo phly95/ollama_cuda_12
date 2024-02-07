@@ -8,12 +8,11 @@ import (
 )
 
 func InitLogging() {
-	// level := slog.LevelInfo
+	level := slog.LevelInfo
 
-	// TODO once things are solid, wire this up to quiet logs down by default
-	// if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
-	level := slog.LevelDebug
-	// }
+	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+		level = slog.LevelDebug
+	}
 
 	var logFile *os.File
 	var err error
