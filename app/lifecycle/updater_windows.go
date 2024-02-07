@@ -29,7 +29,7 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 	installArgs := []string{
 		"/CLOSEAPPLICATIONS",                    // Quit the tray app if it's still running
 		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
-		// "/FORCECLOSEAPPLICATIONS", // Force close the tray app - might be needed
+		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
 	}
 	// When we're not in debug mode, make the upgrade as quiet as possible (no GUI, no prompts)
 	if debug := os.Getenv("OLLAMA_DEBUG"); debug == "" {
