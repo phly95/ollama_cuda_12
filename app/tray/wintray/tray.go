@@ -19,15 +19,6 @@ import (
 
 // Helpful sources: https://github.com/golang/exp/blob/master/shiny/driver/internal/win32
 
-const (
-	updatAvailableMenuID = 1
-	UpdateMenuID         = 2
-	separatorMenuID      = 3
-	LogsMenuID           = 4 // DEBUG
-	GetStartedMenuID     = 5 // DEBUG
-	QuitMenuID           = 6
-)
-
 // Contains information about loaded resources
 type winTray struct {
 	instance,
@@ -59,7 +50,8 @@ type winTray struct {
 	wmSystrayMessage,
 	wmTaskbarCreated uint32
 
-	pendingUpdate bool
+	pendingUpdate  bool
+	updateNotified bool // Only pop up the notification once - TODO consider daily nag?
 	// Callbacks
 	callbacks  commontray.Callbacks
 	normalIcon []byte
@@ -95,19 +87,7 @@ func InitTray(icon, updateIcon []byte) (*winTray, error) {
 		return nil, fmt.Errorf("Unable to set icon: %w", err)
 	}
 
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
-		if err := wt.addOrUpdateMenuItem(LogsMenuID, 0, logsMenuTitle, false); err != nil {
-			return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
-		}
-		if err := wt.addOrUpdateMenuItem(GetStartedMenuID, 0, getStartedMenuTitle, false); err != nil {
-			return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
-		}
-	}
-	if err := wt.addOrUpdateMenuItem(QuitMenuID, 0, quitMenuTitle, false); err != nil {
-		return nil, fmt.Errorf("Unable to create menu entries %w\n", err)
-	}
-
-	return &wt, nil
+	return &wt, wt.initMenus()
 }
 
 func (t *winTray) initInstance() error {
@@ -428,37 +408,6 @@ func (t *winTray) getVisibleItemIndex(parent, val uint32) int {
 		}
 	}
 	return -1
-}
-
-func (t *winTray) UpdateAvailable(ver string) error {
-	slog.Debug("updating menu and sending notification for new update")
-	if err := t.addOrUpdateMenuItem(updatAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
-		return fmt.Errorf("unable to create menu entries %w", err)
-	}
-	if err := t.addOrUpdateMenuItem(UpdateMenuID, 0, updateMenutTitle, false); err != nil {
-		return fmt.Errorf("unable to create menu entries %w", err)
-	}
-	if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {
-		return fmt.Errorf("unable to create menu entries %w", err)
-	}
-	iconFilePath, err := iconBytesToFilePath(wt.updateIcon)
-	if err != nil {
-		return fmt.Errorf("unable to write icon data to temp file: %w", err)
-	}
-	if err := wt.setIcon(iconFilePath); err != nil {
-		return fmt.Errorf("unable to set icon: %w", err)
-	}
-
-	t.pendingUpdate = true
-	// Now pop up the notification
-	t.muNID.Lock()
-	defer t.muNID.Unlock()
-	copy(t.nid.InfoTitle[:], windows.StringToUTF16(updateTitle))
-	copy(t.nid.Info[:], windows.StringToUTF16(fmt.Sprintf(updateMessage, ver)))
-	t.nid.Flags |= NIF_INFO
-	t.nid.Timeout = 10
-	t.nid.Size = uint32(unsafe.Sizeof(*wt.nid))
-	return t.nid.modify()
 }
 
 func iconBytesToFilePath(iconBytes []byte) (string, error) {
