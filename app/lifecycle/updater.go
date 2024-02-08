@@ -91,19 +91,19 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 }
 
 // Returns true if we downloaded a new update, false if we already had it
-func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, error) {
+func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	// Do a head first to check etag info
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
-		return false, err
+		return err
 	}
 	client := getClient(req)
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("error checking update: %w", err)
+		return fmt.Errorf("error checking update: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return false, fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("etag"), "\"")
@@ -123,7 +123,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, e
 	_, err = os.Stat(stageFilename)
 	if err == nil {
 		slog.Debug("update already downloaded")
-		return false, nil
+		return nil
 	}
 
 	cleanupOldDownloads()
@@ -131,7 +131,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, e
 	req.Method = http.MethodGet
 	resp, err = client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("error checking update: %w", err)
+		return fmt.Errorf("error checking update: %w", err)
 	}
 	defer resp.Body.Close()
 	etag = strings.Trim(resp.Header.Get("etag"), "\"")
@@ -145,26 +145,26 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) (bool, e
 	_, err = os.Stat(filepath.Dir(stageFilename))
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
-			return false, fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
+			return fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
 		}
 	}
 
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, fmt.Errorf("failed to read body response: %w", err)
+		return fmt.Errorf("failed to read body response: %w", err)
 	}
 	fp, err := os.OpenFile(stageFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
 	if err != nil {
-		return false, fmt.Errorf("write payload %s: %w", stageFilename, err)
+		return fmt.Errorf("write payload %s: %w", stageFilename, err)
 	}
 	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
-		return false, fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
+		return fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
 	}
 	slog.Info("new update downloaded " + stageFilename)
 
 	UpdateDownloaded = true
-	return true, nil
+	return nil
 }
 
 func cleanupOldDownloads() {
@@ -195,17 +195,13 @@ func StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
 		for {
 			available, resp := IsNewReleaseAvailable(ctx)
 			if available {
-				downloaded, err := DownloadNewRelease(ctx, resp)
+				err := DownloadNewRelease(ctx, resp)
 				if err != nil {
 					slog.Error(fmt.Sprintf("failed to download new release: %s", err))
 				}
-				if downloaded {
-					// Only pop up the update banner if we downloaded fresh bits
-					// TODO - maybe consider ~daily nags if they haven't clicked upgrade?
-					err = cb(resp.UpdateVersion)
-					if err != nil {
-						slog.Warn(fmt.Sprintf("failed to register update available with tray: %s", err))
-					}
+				err = cb(resp.UpdateVersion)
+				if err != nil {
+					slog.Warn(fmt.Sprintf("failed to register update available with tray: %s", err))
 				}
 			}
 			select {

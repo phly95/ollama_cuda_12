@@ -73,35 +73,27 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		// slog.Debug(fmt.Sprintf("XXX Menu Click: %d", menuItemId))
 		// https://docs.microsoft.com/en-us/windows/win32/menurc/wm-command#menus
 		switch menuItemId {
-		case QuitMenuID:
+		case quitMenuID:
 			select {
 			case t.callbacks.Quit <- struct{}{}:
 			// should not happen but in case not listening
 			default:
 				slog.Error("no listener on Quit")
 			}
-		case UpdateMenuID:
+		case updateMenuID:
 			select {
 			case t.callbacks.Update <- struct{}{}:
 			// should not happen but in case not listening
 			default:
 				slog.Error("no listener on Update")
 			}
-		case LogsMenuID:
+		case diagLogsMenuID:
 			select {
 			case t.callbacks.ShowLogs <- struct{}{}:
 			// should not happen but in case not listening
 			default:
 				slog.Error("no listener on ShowLogs")
 			}
-		case GetStartedMenuID:
-			select {
-			case t.callbacks.DoFirstUse <- struct{}{}:
-			// should not happen but in case not listening
-			default:
-				slog.Error("no listener on DoFirstUse")
-			}
-
 		default:
 			slog.Debug(fmt.Sprintf("Unexpected menu item id: %d", menuItemId))
 		}
