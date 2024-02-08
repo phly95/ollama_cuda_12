@@ -1,21 +1,22 @@
-# Windows Native Ollama - Early Access
+# Ollama Windows Preview
 
-Welcome to the Ollama native Windows experience early access.
+Welcome to the Ollama Windows preview.
 
 No more WSL required!
 
-Ollama now runs as a native Windows application, in your user account, with full
-access to your GPU (NVIDIA only at this time.)  Ollama on Windows consists of a
-GUI tray app, the CLI client which can be run in `cmd` or `powershell`, and the
-server process.  This server binds to `localhost:11434` and exposes the Ollama
-REST API and can be used by other applications to run LLMs.
+Ollama now runs as a native Windows application, with full access to your GPU
+(NVIDIA only at this time.)  Ollama does not require Admin privileges.  Ollama
+on Windows consists of a GUI tray app, the CLI client which can be run in `cmd`,
+`powershell` or your favorite terminal app, and the server process.  This server
+binds to `localhost:11434` and exposes the Ollama REST API and can be used by
+other applications to run LLMs.
   
-As this is an early access preview, you should expect a few bugs here and there.
-We're tracking these in a single issue [INSERT LINK HERE] for the duration of
-the early access.  If you run into a problem, please take a look at that issue.
-If you see someone else hit the same issue, please +1 their comment.  If your
-problem looks unique, please add a new comment and attach logs (see
-[Troubleshooting](#troubleshooting) below)
+As this is a preview release, you should expect a few bugs here and there. We're
+tracking these in a single issue [INSERT LINK HERE] for the duration of the
+preview.  If you run into a problem, please take a look at that issue. If
+someone already reported the same issue, please +1 their comment so we can see
+how common it is.  If your problem looks unique, please add a new comment and
+attach logs (see [Troubleshooting](#troubleshooting) below)
 
 ## System Requirements
 
@@ -33,8 +34,8 @@ Here's a quick example showing API access from `powershell`
 
 ## Troubleshooting
 
-While we're in Early Access, `OLLAMA_DEBUG` is always enabled, which adds
-diagnostic menu items to the GUI, and increses logging for the GUI app and
+While we're in preview, `OLLAMA_DEBUG` is always enabled, which adds
+a "view logs" menu item to the app, and increses logging for the GUI app and
 server.
 
 Ollama on Windows stores files in a few different locations.  You can view them in
