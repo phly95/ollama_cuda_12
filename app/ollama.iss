@@ -14,7 +14,7 @@
 #define MyAppPublisher "Ollama, Inc."
 #define MyAppURL "https://ollama.ai/"
 #define MyAppExeName "ollama app.exe"
-#define MyIcon ".\assets\ollama_32_32_solid.ico"
+#define MyIcon ".\assets\app.ico"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -53,11 +53,16 @@ RestartApplications=no
 ExtraDiskSpaceRequired=3826806784
 
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
-WizardSmallImageFile=.\assets\ollama.bmp
+WizardSmallImageFile=.\assets\setup.bmp
 
 ; TODO verifty actual min windows version...
-; https://jrsoftware.org/ishelp/index.php?topic=winvernotes
+; OG Win 10
 MinVersion=10.0.10240
+
+; First release that supports WinRT UI Composition for win32 apps
+; MinVersion=10.0.17134
+; First release with XAML Islands - possible UI path forward
+; MinVersion=10.0.18362
 
 ; quiet...
 DisableDirPage=yes
@@ -70,18 +75,28 @@ DisableWelcomePage=yes
 ; TODO - percentage can't be set less than 100, so how to make it shorter?
 ; WizardSizePercent=100,80
 
+; TODO wrap this in preprocessor macros to check for the cert file
+
+SignTool=MySignTool
+SignedUninstaller=yes
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[LangOptions]
+DialogFontSize=12
 
 [Files]
 Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
 Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 Source: "..\dist\windeps\*.dll"; DestDir: "{app}"; Flags: ignoreversion 64bit
-Source: ".\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {#MyIcon}
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: {#MyIcon}
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
+Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
 
 [Run]
 Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
@@ -103,9 +118,9 @@ Type: filesandordirs; Name: "{%USERPROFILE}\.ollama"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [Messages]
-WizardReady=Welcome to Ollama
+WizardReady=Welcome to Ollama Windows Preview
 ReadyLabel1=%nLet's get you up and running with your own large language models.
-ReadyLabel2b=We'll be installing Ollama in your user account without requiring Admin permissions
+;ReadyLabel2b=We'll be installing Ollama in your user account without requiring Admin permissions
 
 ;FinishedHeadingLabel=Run your first model
 ;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama2

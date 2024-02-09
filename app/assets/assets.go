@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed *.png *.ico
+//go:embed *.ico
 var icons embed.FS
 
 func ListIcons() ([]string, error) {

@@ -1,6 +1,8 @@
 #!powershell
 #
 # powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+#
+# gcloud auth application-default login
 
 $ErrorActionPreference = "Stop"
 
@@ -33,6 +35,16 @@ function checkEnv() {
         $script:PKG_VERSION=$script:VERSION
     }
     write-host "Building Ollama $script:VERSION with package version $script:PKG_VERSION"
+
+    # Check for signing key
+    if (Test-Path "ollama_inc.crt") {
+        $env:OLLAMA_CERT=$(resolve-path ${script:SRC_DIR}\ollama_inc.crt)
+        Write-host "Code signing enabled"
+        ${script:KEY_CONTAINER}="projects/ollama/locations/us-east1/keyRings/windows/cryptoKeys/windows/cryptoKeyVersions/1"
+        # Note: 10 Windows Kit signtool crashes with GCP's plugin
+        ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
+    }
+
 }
 
 
@@ -42,6 +54,11 @@ function buildOllama() {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     & go build "-ldflags=-w -s ""-X=github.com/jmorganca/ollama/version.Version=$script:VERSION"" ""-X=github.com/jmorganca/ollama/server.mode=release""" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    if ($env:OLLAMA_CERT) {
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${env:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${script:KEY_CONTAINER} ollama.exe
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
 }
 
 function buildApp() {
@@ -49,6 +66,11 @@ function buildApp() {
     cd "${script:SRC_DIR}\app"
     & go build "-ldflags=-H windowsgui -w -s ""-X=github.com/jmorganca/ollama/version.Version=$script:VERSION"" ""-X=github.com/jmorganca/ollama/server.mode=release""" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    if ($env:OLLAMA_CERT) {
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${env:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${script:KEY_CONTAINER} app.exe
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
 }
 
 function gatherDependencies() {
@@ -65,14 +87,29 @@ function gatherDependencies() {
 
     cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
     cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
-    # cp "${script:NVIDIA_DIR}\nvcuda.dll" "${script:DEPS_DIR}\"
+
+    cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+    if ($env:OLLAMA_CERT) {
+        write-host "about to sign"
+        foreach ($file in (get-childitem "${script:DEPS_DIR}/cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
+            write-host "signing $file"
+            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${env:OLLAMA_CERT}" `
+                /csp "Google Cloud KMS Provider" /kc ${script:KEY_CONTAINER} $file
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+    }
+
 }
 
 function buildInstaller() {
     write-host "Building Ollama Installer"
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
-    & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
+    if ($env:OLLAMA_CERT) {
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f $env:OLLAMA_CERT /csp `$qGoogle Cloud KMS Provider`$q /kc ${script:KEY_CONTAINER} `$f" .\ollama.iss
+    } else {
+        & "${script:INNO_SETUP_DIR}\ISCC.exe" .\ollama.iss
+    }
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 

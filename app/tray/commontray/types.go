@@ -4,8 +4,8 @@ var (
 	Title   = "Ollama"
 	ToolTip = "Ollama"
 
-	UpdateIconName = "iconUpdateTemplate@2x"
-	IconName       = "iconTemplate@2x"
+	UpdateIconName = "tray_upgrade"
+	IconName       = "tray"
 )
 
 type Callbacks struct {

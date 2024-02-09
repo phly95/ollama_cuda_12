@@ -3,6 +3,7 @@
 $ErrorActionPreference = "Stop"
 
 function init_vars {
+    $script:KEY_CONTAINER="projects/ollama/locations/us-east1/keyRings/windows/cryptoKeys/windows/cryptoKeyVersions/1"
     $script:llamacppDir = "../llama.cpp"
     $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A", "x64")
     $script:cmakeTargets = @("ext_server")
@@ -31,6 +32,8 @@ function init_vars {
     } else {
         $script:CMAKE_CUDA_ARCHITECTURES=$env:CMAKE_CUDA_ARCHITECTURES
     }
+    # Note: 10 Windows Kit signtool crashes with GCP's plugin
+    ${script:SignTool}="C:\Program Files (x86)\Windows Kits\8.1\bin\x64\signtool.exe"
 }
 
 function git_module_setup {
@@ -90,10 +93,20 @@ function install {
     md "${script:buildDir}/lib" -ea 0 > $null
     cp "${script:buildDir}/bin/${script:config}/ext_server.dll" "${script:buildDir}/lib"
     cp "${script:buildDir}/bin/${script:config}/llama.dll" "${script:buildDir}/lib"
-
     # Display the dll dependencies in the build log
     if ($script:DUMPBIN -ne $null) {
         & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    }
+}
+
+function sign {
+    if ("${env:OLLAMA_CERT}") {
+        write-host "Signing ${script:buildDir}/lib/*.dll"
+        foreach ($file in (get-childitem "${script:buildDir}/lib/*.dll")){
+            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${env:OLLAMA_CERT}" `
+                /csp "Google Cloud KMS Provider" /kc $script:KEY_CONTAINER $file
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     }
 }
 
@@ -145,6 +158,7 @@ $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu"
 write-host "Building LCD CPU"
 build
 install
+sign
 compress_libs
 
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
@@ -152,6 +166,7 @@ $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx"
 write-host "Building AVX CPU"
 build
 install
+sign
 compress_libs
 
 $script:cmakeDefs = $script:commonCpuDefs + @("-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
@@ -159,6 +174,7 @@ $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cpu_avx2"
 write-host "Building AVX2 CPU"
 build
 install
+sign
 compress_libs
 
 if ($null -ne $script:CUDA_LIB_DIR) {
@@ -176,6 +192,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     cp "${script:CUDA_LIB_DIR}/cudart64_*.dll" "${script:buildDir}/lib"
     cp "${script:CUDA_LIB_DIR}/cublas64_*.dll" "${script:buildDir}/lib"
     cp "${script:CUDA_LIB_DIR}/cublasLt64_*.dll" "${script:buildDir}/lib"
+    sign
     compress_libs
 }
 # TODO - actually implement ROCm support on windows
