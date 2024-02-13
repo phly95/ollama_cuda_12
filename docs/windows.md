@@ -11,19 +11,17 @@ on Windows consists of a GUI tray app, the CLI client which can be run in `cmd`,
 binds to `localhost:11434` and exposes the Ollama REST API and can be used by
 other applications to run LLMs.
   
-As this is a preview release, you should expect a few bugs here and there. We're
-tracking these in a single issue [INSERT LINK HERE] for the duration of the
-preview.  If you run into a problem, please take a look at that issue. If
-someone already reported the same issue, please +1 their comment so we can see
-how common it is.  If your problem looks unique, please add a new comment and
-attach logs (see [Troubleshooting](#troubleshooting) below)
+As this is a preview release, you should expect a few bugs here and there.   If
+you run into a problem you can reach out on
+[Discord](https://discord.gg/ollama), or file an 
+[issue](https://github.com/ollama/ollama/issues).  
+Logs will be often be helpful in dianosing the problem (see
+[Troubleshooting](#troubleshooting) below)
 
 ## System Requirements
 
 * Windows 10 or newer, Home or Pro
-* NVIDIA Drivers if you have an NVIDIA card
-
-TODO - figure out minimum driver version compatible with cuda v11.3
+* NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
 
 ## API Access
 
