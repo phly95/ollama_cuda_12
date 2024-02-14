@@ -87,6 +87,7 @@ function gatherDependencies() {
 
     cp "${script:NVIDIA_DIR}\cudart64_*.dll" "${script:DEPS_DIR}\"
     cp "${script:NVIDIA_DIR}\cublas64_*.dll" "${script:DEPS_DIR}\"
+    cp "${script:NVIDIA_DIR}\cublasLt64_*.dll" "${script:DEPS_DIR}\"
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ($env:OLLAMA_CERT) {

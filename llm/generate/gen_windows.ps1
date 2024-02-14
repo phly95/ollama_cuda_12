@@ -189,9 +189,6 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
     build
     install
-    cp "${script:CUDA_LIB_DIR}/cudart64_*.dll" "${script:buildDir}/lib"
-    cp "${script:CUDA_LIB_DIR}/cublas64_*.dll" "${script:buildDir}/lib"
-    cp "${script:CUDA_LIB_DIR}/cublasLt64_*.dll" "${script:buildDir}/lib"
     sign
     compress_libs
 }
