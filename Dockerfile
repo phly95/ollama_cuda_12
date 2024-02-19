@@ -93,6 +93,7 @@ COPY --from=cpu_avx2-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.c
 COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 # COPY --from=rocm-5-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 COPY --from=rocm-6-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
+RUN mkdir -p ./dist/deps/ && cp llm/llama.cpp/build/linux/rocm*.tgz ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build .
