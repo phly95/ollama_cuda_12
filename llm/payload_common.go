@@ -105,7 +105,7 @@ func rocmDynLibPresent() bool {
 
 func nativeInit() error {
 	slog.Info("Extracting dynamic libraries...")
-	libDir, err := libDir()
+	libDir, err := gpu.LibDir()
 	if err != nil {
 		return err
 	}

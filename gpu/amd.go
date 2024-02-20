@@ -16,6 +16,23 @@ import (
 
 // Discovery logic for AMD/ROCm GPUs
 
+/*
+Straw-man algo
+- Detect if amdgpu driver is present, if not don't bother going further for AMD support
+- If driver present, then get gfx version of card(s)
+- Try to live off the land if we see rocmv6 present
+	- ROCM_HOME (?)
+	- /opt/rocm/lib
+	- check for compatibility and abort with good error message if not supported by installed rocm lib
+- If no v6 detected on host
+	- Check for presence in libDir
+	- if not found, download from well known location on our release page
+	- if that fails, abort AMD support with good error and fallback to CPU mode
+
+
+TODO - test old drivers with this approach and make sure rocmv6 doesn't blow up on a supported GPU with old driver
+*/
+
 const (
 	DriverVersionFile     = "/sys/module/amdgpu/version"
 	GPUPropertiesFileGlob = "/sys/class/kfd/kfd/topology/nodes/*/properties"
@@ -36,6 +53,32 @@ func AMDDetected() bool {
 		return false
 	}
 	return true
+}
+
+func AMDGetLibDir() string {
+	// Prefer to use host installed ROCm, as long as it meets our minimum requirements
+
+	// TODO
+
+	// HIP_PATH + lib/
+	// LD_LIBRARY_PATH
+	// /opt/rocm/lib
+
+	// If the host version isn't compatible or not found, then load into our libdir
+	libDir, err := LibDir()
+	if err != nil {
+		slog.Warn("unable to lookup lib dir: %s", err)
+		return ""
+	}
+
+	// TODO
+
+	// Stat the rocm payloads in the lib dir, if not found, download it
+	// Try our current version, then try latest release
+	// if we can't download, report a good error to guide the user what to do.
+
+	return libDir
+
 }
 
 func AMDDriverVersion() (string, error) {
@@ -98,4 +141,16 @@ func AMDGFXVersions() []Version {
 
 func (v Version) ToGFXString() string {
 	return fmt.Sprintf("gfx%d%d%d", v.Major, v.Minor, v.Patch)
+}
+
+func GetSupportedGFX(libDir string) ([]string, error) {
+	var ret []string
+	files, err := filepath.Glob(filepath.Join(libDir, "rocblas", "library", "TensileLibrary_lazy_gfx*.dat"))
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		ret = append(ret, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "TensileLibrary_lazy_"), ".dat"))
+	}
+	return ret, nil
 }

@@ -189,6 +189,7 @@ if [ -d "${ROCM_PATH}" ]; then
     build
 
     # Gather up the ROCM dependencies
+    # TODO - move this out of the generate step since it's more about packaging for dist not local dev from source
     mkdir -p "${BUILD_DIR}/scratch/"
     mkdir -p "${BUILD_DIR}/deps/"
     echo "Gathering and compressing dependencies"
