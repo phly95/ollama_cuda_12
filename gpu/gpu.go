@@ -16,8 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -150,87 +148,11 @@ func GetGPUInfo() GpuInfo {
 				slog.Info(fmt.Sprintf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
 		}
-	} else if AMDDetected() && gpuHandles.rocm != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
-
-		// TODO move this into the amd.go
-
-		ver, err := AMDDriverVersion()
-		if err == nil {
-			slog.Info("AMD Driver: " + ver)
-		} else {
-			// For now this is benign, but we may eventually need to fail compatibility checks
-			slog.Debug("error looking up amd driver version: %s", err)
-		}
-		gfx := AMDGFXVersions()
-		tooOld := false
-		if len(gfx) > 0 {
-
-			libDir := AMDGetLibDir()
-			supported, err := GetSupportedGFX(libDir)
-			if err != nil {
-				slog.Warn(fmt.Sprintf("failed to lookup supported GFX types, falling back to CPU mode: %s", err))
-				// TODO break out somehow
-			}
-			slog.Info(fmt.Sprintf("XXX supported GPU types %v", supported))
-
-			for _, v := range gfx {
-				// TODO bypass if the user has set the magic env var
-				// TODO - if they have supported and unsupported, can we bypass the unsupported ones?
-				if !slices.Contains[[]string, string](supported, v.ToGFXString()) {
-					slog.Warn(fmt.Sprintf("your gpu %s is not supported by %s %v", v.ToGFXString(), libDir, supported))
-				} else {
-					slog.Info("XXX yay GPU is supported")
-				}
-				if v.Major < 9 {
-					slog.Info("AMD GPU too old, falling back to CPU " + v.ToGFXString())
-					tooOld = true
-					break
-				}
-
-				// TODO - remap gfx strings for unsupporetd minor/patch versions to supported for the same major
-				// e.g. gfx1034 works if we map it to gfx1030 at runtime
-
-			}
-			if !tooOld {
-				// TODO - this algo can be shifted over to use sysfs instead of the rocm info library...
-				C.rocm_check_vram(*gpuHandles.rocm, &memInfo)
-				if memInfo.err != nil {
-					slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))
-					C.free(unsafe.Pointer(memInfo.err))
-				} else if memInfo.igpu_index >= 0 && memInfo.count == 1 {
-					// Only one GPU detected and it appears to be an integrated GPU - skip it
-					slog.Info("ROCm unsupported integrated GPU detected")
-				} else if memInfo.count > 0 {
-					if memInfo.igpu_index >= 0 {
-						// We have multiple GPUs reported, and one of them is an integrated GPU
-						// so we have to set the env var to bypass it
-						// If the user has specified their own ROCR_VISIBLE_DEVICES, don't clobber it
-						val := os.Getenv("ROCR_VISIBLE_DEVICES")
-						if val == "" {
-							devices := []string{}
-							for i := 0; i < int(memInfo.count); i++ {
-								if i == int(memInfo.igpu_index) {
-									continue
-								}
-								devices = append(devices, strconv.Itoa(i))
-							}
-							val = strings.Join(devices, ",")
-							os.Setenv("ROCR_VISIBLE_DEVICES", val)
-						}
-						slog.Info(fmt.Sprintf("ROCm integrated GPU detected - ROCR_VISIBLE_DEVICES=%s", val))
-					}
-					resp.Library = "rocm"
-					var version C.rocm_version_resp_t
-					C.rocm_get_version(*gpuHandles.rocm, &version)
-					verString := C.GoString(version.str)
-					if version.status == 0 {
-						resp.Variant = "v" + verString
-					} else {
-						slog.Info(fmt.Sprintf("failed to look up ROCm version: %s", verString))
-					}
-					C.free(unsafe.Pointer(version.str))
-				}
-			}
+	} else if gpuHandles.rocm != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
+		AMDGetGPUInfo(&resp)
+		slog.Debug("XXX after calling AMDGetGPUInfo library = " + resp.Library)
+		if resp.Library != "" {
+			return resp
 		}
 	}
 	if resp.Library == "" {

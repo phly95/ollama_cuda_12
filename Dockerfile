@@ -51,6 +51,14 @@ WORKDIR /go/src/github.com/jmorganca/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
 RUN OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN mkdir /tmp/scratch && \
+    for dep in $(cat /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/x86_64/rocm*/lib/deps.txt) ; do \
+        cp ${dep} /tmp/scratch/ || exit 1 ; \
+    done && \
+    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd /tmp/scratch/ && tar xf - ) && \
+    mkdir -p /go/src/github.com/jmorganca/ollama/dist/deps/ && \
+    (cd /tmp/scratch/ && tar czvf /go/src/github.com/jmorganca/ollama/dist/deps/rocm_v6-x86_64-deps.tgz . )
+
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
@@ -93,7 +101,8 @@ COPY --from=cpu_avx2-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.c
 COPY --from=cuda-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 # COPY --from=rocm-5-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
 COPY --from=rocm-6-build-amd64 /go/src/github.com/jmorganca/ollama/llm/llama.cpp/build/linux/ llm/llama.cpp/build/linux/
-RUN mkdir -p ./dist/deps/ && cp llm/llama.cpp/build/linux/rocm*.tgz ./dist/deps/
+COPY --from=rocm-6-build-amd64 /go/src/github.com/jmorganca/ollama/dist/deps/ ./dist/deps/
+# RUN mkdir -p ./dist/deps/ && cp llm/llama.cpp/build/linux/rocm*.tgz ./dist/deps/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN go build .

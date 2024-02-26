@@ -185,21 +185,15 @@ if [ -d "${ROCM_PATH}" ]; then
     init_vars
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     BUILD_DIR="${LLAMACPP_DIR}/build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
+    EXTRA_LIBS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -Wl,-rpath,\$ORIGIN/../rocm/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
-    # Gather up the ROCM dependencies
-    # TODO - move this out of the generate step since it's more about packaging for dist not local dev from source
-    mkdir -p "${BUILD_DIR}/scratch/"
-    mkdir -p "${BUILD_DIR}/deps/"
-    echo "Gathering and compressing dependencies"
-    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ${BUILD_DIR}/scratch/ && tar xf - )
-    for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu ); do
-        cp "${dep}" "${BUILD_DIR}/scratch/"
+    # Record the ROCM dependencies
+    rm -f "${BUILD_DIR}/lib/deps.txt"
+    touch "${BUILD_DIR}/lib/deps.txt"
+    for dep in $(ldd "${BUILD_DIR}/lib/libext_server.so" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e rocm -e amdgpu -e libtinfo ); do
+        echo "${dep}" >> "${BUILD_DIR}/lib/deps.txt"
     done
-    (cd "${BUILD_DIR}/scratch/" && tar cf - . ) | gzip > "${LLAMACPP_DIR}/build/linux/rocm${ROCM_VARIANT}-${ARCH}-deps.tgz"
-    rm -rf "${BUILD_DIR}/scratch/"
-
     compress_libs
 fi
 
