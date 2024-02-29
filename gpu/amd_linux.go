@@ -58,7 +58,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 		slog.Info("AMD Driver: " + ver)
 	} else {
 		// For now this is benign, but we may eventually need to fail compatibility checks
-		slog.Debug("error looking up amd driver version: %s", err)
+		slog.Debug(fmt.Sprintf("error looking up amd driver version: %s", err))
 	}
 
 	// If the user has specified exactly which GPUs to use, look up their memory
@@ -79,7 +79,9 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 
 	// Gather GFX version information from all detected cards
 	gfx := AMDGFXVersions()
+	verStrings := []string{}
 	for i, v := range gfx {
+		verStrings = append(verStrings, v.ToGFXString())
 		if v.Major == 0 {
 			// Silently skip CPUs
 			skip[i] = struct{}{}
@@ -91,10 +93,11 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 			skip[i] = struct{}{}
 		}
 	}
+	slog.Info(fmt.Sprintf("detected amdgpu versions %v", verStrings))
 
 	// Abort if all GPUs are skipped
 	if len(skip) >= len(gfx) {
-		slog.Debug("all detected amdgpus are skipped, falling back to CPU")
+		slog.Info("all detected amdgpus are skipped, falling back to CPU")
 		return
 	}
 
@@ -352,7 +355,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// If we still haven't found a usable rocm, the user will have to download it on their own
-	slog.Warn("amdgpu detected, but no compatible rocm found.  Either install rocm v6, or run the following")
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or run the following")
 	slog.Warn(fmt.Sprintf(curlMsg, version.Version, rocmTargetDir))
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
 }

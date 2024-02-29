@@ -1,5 +1,14 @@
 package gpu
 
+/*
+#cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
+#cgo windows LDFLAGS: -lpthread
+
+#include "gpu_info.h"
+
+*/
+import "C"
+
 import (
 	"fmt"
 	"log/slog"

@@ -69,23 +69,23 @@ func initGPUHandles() {
 	gpuHandles = &handles{nil, nil}
 	var cudaMgmtName string
 	var cudaMgmtPatterns []string
-	var rocmMgmtName string
-	var rocmMgmtPatterns []string
+	// var rocmMgmtName string
+	// var rocmMgmtPatterns []string
 	switch runtime.GOOS {
 	case "windows":
 		cudaMgmtName = "nvml.dll"
 		cudaMgmtPatterns = make([]string, len(CudaWindowsGlobs))
 		copy(cudaMgmtPatterns, CudaWindowsGlobs)
-		rocmMgmtName = "rocm_smi64.dll"
-		rocmMgmtPatterns = make([]string, len(RocmWindowsGlobs))
-		copy(rocmMgmtPatterns, RocmWindowsGlobs)
+		// rocmMgmtName = "rocm_smi64.dll"
+		// rocmMgmtPatterns = make([]string, len(RocmWindowsGlobs))
+		// copy(rocmMgmtPatterns, RocmWindowsGlobs)
 	case "linux":
 		cudaMgmtName = "libnvidia-ml.so"
 		cudaMgmtPatterns = make([]string, len(CudaLinuxGlobs))
 		copy(cudaMgmtPatterns, CudaLinuxGlobs)
-		rocmMgmtName = "librocm_smi64.so"
-		rocmMgmtPatterns = make([]string, len(RocmLinuxGlobs))
-		copy(rocmMgmtPatterns, RocmLinuxGlobs)
+		// rocmMgmtName = "librocm_smi64.so"
+		// rocmMgmtPatterns = make([]string, len(RocmLinuxGlobs))
+		// copy(rocmMgmtPatterns, RocmLinuxGlobs)
 	default:
 		return
 	}
@@ -101,15 +101,15 @@ func initGPUHandles() {
 		}
 	}
 
-	rocmLibPaths := FindGPULibs(rocmMgmtName, rocmMgmtPatterns)
-	if len(rocmLibPaths) > 0 {
-		rocm := LoadROCMMgmt(rocmLibPaths)
-		if rocm != nil {
-			slog.Info("Radeon GPU detected")
-			gpuHandles.rocm = rocm
-			return
-		}
-	}
+	// rocmLibPaths := FindGPULibs(rocmMgmtName, rocmMgmtPatterns)
+	// if len(rocmLibPaths) > 0 {
+	// 	rocm := LoadROCMMgmt(rocmLibPaths)
+	// 	if rocm != nil {
+	// 		slog.Info("Radeon GPU detected")
+	// 		gpuHandles.rocm = rocm
+	// 		return
+	// 	}
+	// }
 }
 
 func GetGPUInfo() GpuInfo {
@@ -148,7 +148,7 @@ func GetGPUInfo() GpuInfo {
 				slog.Info(fmt.Sprintf("CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
 			}
 		}
-	} else if gpuHandles.rocm != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
+	} else {
 		AMDGetGPUInfo(&resp)
 		slog.Debug("XXX after calling AMDGetGPUInfo library = " + resp.Library)
 		if resp.Library != "" {

@@ -2,10 +2,34 @@
 
 $ErrorActionPreference = "Stop"
 
+function amdGPUs {
+    if ($env:AMDGPU_TARGETS) {
+        return $env:AMDGPU_TARGETS
+    }
+    $GPU_LIST = @(
+        "gfx900"
+        "gfx906:xnack-"
+        "gfx908:xnack-"
+        "gfx90a:xnack+"
+        "gfx90a:xnack-"
+        "gfx1010"
+        "gfx1012"
+        "gfx1030"
+        "gfx1100"
+        "gfx1101"
+        "gfx1102"
+    )
+    $GPU_LIST -join ';'
+}
+
 function init_vars {
     $script:SRC_DIR = $(resolve-path "..\..\")
     $script:llamacppDir = "../llama.cpp"
-    $script:cmakeDefs = @("-DBUILD_SHARED_LIBS=on", "-DLLAMA_NATIVE=off",  "-A", "x64")
+    $script:cmakeDefs = @(
+        "-DBUILD_SHARED_LIBS=on",
+        "-DLLAMA_NATIVE=off"
+        # "-A", "x64"
+        )
     $script:cmakeTargets = @("ext_server")
     $script:ARCH = "amd64" # arm not yet supported.
     if ($env:CGO_CFLAGS -contains "-g") {
@@ -183,27 +207,71 @@ install
 sign
 compress_libs
 
-if ($null -ne $script:CUDA_LIB_DIR) {
-    # Then build cuda as a dynamically loaded library
-    $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
-    $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
-    if ($null -ne $script:CUDA_VERSION) {
-        $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
+# if ($null -ne $script:CUDA_LIB_DIR) {
+#     # Then build cuda as a dynamically loaded library
+#     $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
+#     $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
+#     if ($null -ne $script:CUDA_VERSION) {
+#         $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
+#     }
+#     init_vars
+#     $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
+#     $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+#     build
+#     install
+#     sign
+#     compress_libs
+# }
+
+if ($null -ne $env:HIP_PATH) {
+    # $script:HIP_PATH=($env:HIP_PATH -replace '\\', '/')
+    # $script:HIP_PATH="../../rocm/"
+    # Is this stable?
+    $script:ROCM_VERSION=(get-item $env:HIP_PATH).Basename
+    if ($null -ne $script:ROCM_VERSION) {
+        $script:ROCM_VARIANT="_"+$script:ROCM_VERSION
     }
+
+    # 
+    # 
     init_vars
-    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/cuda$script:CUDA_VARIANT"
-    $script:cmakeDefs += @("-DLLAMA_CUBLAS=ON", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR", "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}")
+    # $env:CC="${script:HIP_PATH}bin/clang.exe"
+    # $env:CXX="${script:HIP_PATH}bin/clang++.exe"
+    # write-host "`$env:CC=$env:CC"
+    # 
+    # 
+    # "-DCMAKE_MODULE_PATH=${env:HIP_PATH}\cmake",
+    # "-DHIP_COMPILER=${env:HIP_PATH}\bin\hipcc", "-DHIP_RUNTIME=rocclr",  
+    #  
+    $script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
+    $script:cmakeDefs += @(
+        # "--trace",
+        "-G", "Ninja", 
+        "-DCMAKE_C_COMPILER=clang.exe",
+        "-DCMAKE_CXX_COMPILER=clang++.exe",
+        # "-DCMAKE_PREFIX_PATH=${script:HIP_PATH}",
+        # "-DCMAKE_TOOLCHAIN_FILE=${script:SRC_DIR}\llm\generate\toolchain-windows.cmake",
+        # "-Dhip_DIR=${env:HIP_PATH}\lib\cmake\hip",
+        # "-Dhipblas_DIR=${env:HIP_PATH}\lib\cmake\hipblas",
+        # "-Drocblas_DIR=${env:HIP_PATH}\lib\cmake\rocblas",
+        "-DLLAMA_HIPBLAS=on",
+        # "-DHIP_PLATFORM=amd",
+        "-DLLAMA_AVX=on",
+        "-DLLAMA_AVX2=off",
+        # "-DAMDGPU_TARGETS=gfx1030"
+        "-DAMDGPU_TARGETS=$(amdGPUs)"
+        # "-DGPU_TARGETS=$(amdGPUs)"
+        )
     build
+    # Ninja doesn't prefix with config name
+    ${script:config}=""
     install
+    if ($script:DUMPBIN -ne $null) {
+        & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/${script:config}/ext_server.dll" | select-string ".dll"
+    }
     sign
     compress_libs
 }
-# TODO - actually implement ROCm support on windows
-$script:buildDir="${script:llamacppDir}/build/windows/${script:ARCH}/rocm"
-
-rm -ea 0 -recurse -force -path "${script:buildDir}/lib"
-md "${script:buildDir}/lib" -ea 0 > $null
-echo $null >> "${script:buildDir}/lib/.generated"
 
 cleanup
 write-host "`ngo generate completed"

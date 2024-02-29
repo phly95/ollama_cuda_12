@@ -96,7 +96,8 @@ func newDynExtServer(library, model string, adapters, projectors []string, opts 
 	sparams.embedding = true
 	sparams.n_ctx = C.uint(opts.NumCtx)
 	sparams.n_batch = C.uint(opts.NumBatch)
-	sparams.n_gpu_layers = C.int(opts.NumGPU)
+	sparams.n_gpu_layers = C.int(999)
+	// sparams.n_gpu_layers = C.int(opts.NumGPU)
 	sparams.main_gpu = C.int(opts.MainGPU)
 	sparams.n_parallel = 1 // TODO - wire up concurrency
 
