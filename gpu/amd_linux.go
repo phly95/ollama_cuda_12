@@ -36,6 +36,7 @@ const (
 	// Prefix with the node dir
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 	GPUUsedMemoryFileGlob  = "mem_banks/*/used_memory"
+	RocmStandardLocation   = "/opt/rocm/lib"
 )
 
 var (
@@ -47,6 +48,7 @@ var (
 // ROCR_VISIBLE_DEVICES will be set if we detect a mix of unsupported and supported devices
 // and the user hasn't already set this variable
 func AMDGetGPUInfo(resp *GpuInfo) {
+	// TODO - try to DRY this out with windows (needs some OS specific logic here and there...)
 	if !AMDDetected() {
 		return
 	}
@@ -256,21 +258,6 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 	}
 }
 
-func amdSetVisibleDevices(ids []int, skip map[int]interface{}) {
-	// Set the visible devices if not already set
-	// TODO - does sort order matter?
-	devices := []string{}
-	for i := range ids {
-		if _, skipped := skip[i]; skipped {
-			continue
-		}
-		devices = append(devices, strconv.Itoa(i))
-	}
-	val := strings.Join(devices, ",")
-	os.Setenv("ROCR_VISIBLE_DEVICES", val)
-	slog.Debug("ROCR_VISIBLE_DEVICES=" + val)
-}
-
 // Quick check for AMD driver so we can skip amdgpu discovery if not present
 func AMDDetected() bool {
 	// Some driver versions (older?) don't have a version file, so just lookup the parent dir
@@ -282,17 +269,6 @@ func AMDDetected() bool {
 	} else if err != nil {
 		slog.Debug(fmt.Sprintf("error looking up amd driver %s %s", sysfsDir, err))
 		return false
-	}
-	return true
-}
-
-// Determine if the given ROCm lib directory is usable by checking for existence of some glob patterns
-func rocmLibUsable(libDir string) bool {
-	for _, g := range ROCmLibGlobs {
-		res, _ := filepath.Glob(filepath.Join(libDir, g))
-		if len(res) == 0 {
-			return false
-		}
 	}
 	return true
 }
@@ -435,16 +411,4 @@ func AMDGFXVersions() map[int]Version {
 
 func (v Version) ToGFXString() string {
 	return fmt.Sprintf("gfx%d%d%d", v.Major, v.Minor, v.Patch)
-}
-
-func GetSupportedGFX(libDir string) ([]string, error) {
-	var ret []string
-	files, err := filepath.Glob(filepath.Join(libDir, "rocblas", "library", "TensileLibrary_lazy_gfx*.dat"))
-	if err != nil {
-		return nil, err
-	}
-	for _, file := range files {
-		ret = append(ret, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "TensileLibrary_lazy_"), ".dat"))
-	}
-	return ret, nil
 }
