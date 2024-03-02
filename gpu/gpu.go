@@ -23,7 +23,6 @@ import (
 
 type handles struct {
 	cuda *C.cuda_handle_t
-	rocm *C.rocm_handle_t
 }
 
 var gpuMutex sync.Mutex
@@ -53,39 +52,23 @@ var CudaWindowsGlobs = []string{
 	"c:\\Windows\\System32\\nvml.dll",
 }
 
-var RocmLinuxGlobs = []string{
-	"/opt/rocm*/lib*/librocm_smi64.so*",
-}
-
-var RocmWindowsGlobs = []string{
-	"c:\\Windows\\System32\\rocm_smi64.dll",
-}
-
 // Note: gpuMutex must already be held
 func initGPUHandles() {
 
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
-	gpuHandles = &handles{nil, nil}
+	gpuHandles = &handles{nil}
 	var cudaMgmtName string
 	var cudaMgmtPatterns []string
-	// var rocmMgmtName string
-	// var rocmMgmtPatterns []string
 	switch runtime.GOOS {
 	case "windows":
 		cudaMgmtName = "nvml.dll"
 		cudaMgmtPatterns = make([]string, len(CudaWindowsGlobs))
 		copy(cudaMgmtPatterns, CudaWindowsGlobs)
-		// rocmMgmtName = "rocm_smi64.dll"
-		// rocmMgmtPatterns = make([]string, len(RocmWindowsGlobs))
-		// copy(rocmMgmtPatterns, RocmWindowsGlobs)
 	case "linux":
 		cudaMgmtName = "libnvidia-ml.so"
 		cudaMgmtPatterns = make([]string, len(CudaLinuxGlobs))
 		copy(cudaMgmtPatterns, CudaLinuxGlobs)
-		// rocmMgmtName = "librocm_smi64.so"
-		// rocmMgmtPatterns = make([]string, len(RocmLinuxGlobs))
-		// copy(rocmMgmtPatterns, RocmLinuxGlobs)
 	default:
 		return
 	}
@@ -100,16 +83,6 @@ func initGPUHandles() {
 			return
 		}
 	}
-
-	// rocmLibPaths := FindGPULibs(rocmMgmtName, rocmMgmtPatterns)
-	// if len(rocmLibPaths) > 0 {
-	// 	rocm := LoadROCMMgmt(rocmLibPaths)
-	// 	if rocm != nil {
-	// 		slog.Info("Radeon GPU detected")
-	// 		gpuHandles.rocm = rocm
-	// 		return
-	// 	}
-	// }
 }
 
 func GetGPUInfo() GpuInfo {
@@ -150,7 +123,6 @@ func GetGPUInfo() GpuInfo {
 		}
 	} else {
 		AMDGetGPUInfo(&resp)
-		slog.Debug("XXX after calling AMDGetGPUInfo library = " + resp.Library)
 		if resp.Library != "" {
 			return resp
 		}
@@ -268,23 +240,6 @@ func LoadCUDAMgmt(cudaLibPaths []string) *C.cuda_handle_t {
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			return &resp.ch
-		}
-	}
-	return nil
-}
-
-func LoadROCMMgmt(rocmLibPaths []string) *C.rocm_handle_t {
-	var resp C.rocm_init_resp_t
-	resp.rh.verbose = getVerboseState()
-	for _, libPath := range rocmLibPaths {
-		lib := C.CString(libPath)
-		defer C.free(unsafe.Pointer(lib))
-		C.rocm_init(lib, &resp)
-		if resp.err != nil {
-			slog.Info(fmt.Sprintf("Unable to load ROCm management library %s: %s", libPath, C.GoString(resp.err)))
-			C.free(unsafe.Pointer(resp.err))
-		} else {
-			return &resp.rh
 		}
 	}
 	return nil

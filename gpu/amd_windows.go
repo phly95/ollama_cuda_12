@@ -17,14 +17,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unsafe"
-
-	"github.com/jmorganca/ollama/version"
 )
 
 const (
-	// TODO - powershell translation
-	curlMsg              = "curl -fsSL https://github.com/ollama/ollama/releases/download/v%s/rocm_v6-x86_64-deps.tgz | tar -zxf - -C %s"
 	RocmStandardLocation = "C:\\Program Files\\AMD\\ROCm\\5.7\\bin" // TODO glob?
 )
 
@@ -113,7 +108,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 				skip[i] = struct{}{}
 				continue
 			} else {
-				slog.Debug(fmt.Sprintf("amdgpu [%d] %s is supported", i, gfx))
+				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, gfx))
 			}
 		}
 
@@ -138,16 +133,23 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 		slog.Info("all detected amdgpus are skipped, falling back to CPU")
 		return
 	}
-	slog.Debug(fmt.Sprintf("XXX ids: %v", ids))
-	slog.Debug(fmt.Sprintf("XXX skip: %v", skip))
 	if len(skip) > 0 {
 		amdSetVisibleDevices(ids, skip)
 	}
 	UpdatePath(libDir)
 }
 
-// TODO this likely needs more work
 func AMDValidateLibDir() (string, error) {
+
+	// Installer payload location
+	exe, err := os.Executable()
+	if err == nil {
+		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
+		if rocmLibUsable(rocmTargetDir) {
+			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
+			return rocmTargetDir, nil
+		}
+	}
 
 	// If we already have a rocm dependency wired, nothing more to do
 	libDir, err := LibDir()
@@ -174,30 +176,7 @@ func AMDValidateLibDir() (string, error) {
 		return RocmStandardLocation, nil
 	}
 
-	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm, or run the following")
-	slog.Warn(fmt.Sprintf(curlMsg, version.Version, rocmTargetDir))
+	// Should not happen on windows since we include it in the installer, but stand-alone binary might hit this
+	slog.Warn("amdgpu detected, but no compatible rocm library found.  Please install ROCm v6")
 	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
-}
-
-// TODO - might be useful on windows stil...
-func rocmMemLookup(memInfo *C.mem_info_t, skip map[int]interface{}) {
-	C.rocm_check_vram(*gpuHandles.rocm, memInfo)
-	if memInfo.err != nil {
-		slog.Info(fmt.Sprintf("error looking up ROCm GPU memory: %s", C.GoString(memInfo.err)))
-		C.free(unsafe.Pointer(memInfo.err))
-	} else if memInfo.igpu_index >= 0 && memInfo.count == 1 {
-		// Only one GPU detected and it appears to be an integrated GPU - skip it
-		slog.Info("ROCm unsupported integrated GPU detected")
-	} else if memInfo.count > 0 {
-		if memInfo.igpu_index >= 0 {
-			// We have multiple GPUs reported, and one of them is an integrated GPU
-			// so we have to set the env var to bypass it
-			for i := 0; i < int(memInfo.count); i++ {
-				if i == int(memInfo.igpu_index) {
-					slog.Info("ROCm unsupported integrated GPU detected")
-					skip[i] = struct{}{}
-				}
-			}
-		}
-	}
 }

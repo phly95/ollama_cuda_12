@@ -40,6 +40,15 @@ case "$KERN" in
     *) ;;
 esac
 
+OLLAMA_VERSION=${OLLAMA_VERSION:-""}
+if [ -z "${OLLAMA_VERSION}" ]; then
+    URL_PREFIX="https://ollama.com/download"
+else
+    # URL_PREFIX="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}"
+    # DO NOT MERGE - for testing only...
+    URL_PREFIX="https://github.com/dhiltgen/ollama/releases/download/v${OLLAMA_VERSION}"
+fi
+
 
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
@@ -61,7 +70,7 @@ if [ -n "$NEEDS" ]; then
 fi
 
 status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-$ARCH"
+curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "${URL_PREFIX}/ollama-linux-$ARCH"
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
@@ -127,14 +136,22 @@ if available systemctl; then
 fi
 
 if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA GPU. Install lspci or lshw to automatically detect and install NVIDIA CUDA drivers."
+    warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
 fi
 
 check_gpu() {
     case $1 in
-        lspci) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
-        lshw) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+        lspci) 
+            case $2 in
+                nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
+                amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+            esac ;;
+        lshw) 
+            case $2 in
+                nvidia) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
+                amdgpu) available lshw && $SUDO lshw -c display -numeric | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+            esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
 }
@@ -144,9 +161,28 @@ if check_gpu nvidia-smi; then
     exit 0
 fi
 
-if ! check_gpu lspci && ! check_gpu lshw; then
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
-    warning "No NVIDIA GPU detected. Ollama will run in CPU-only mode."
+    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    exit 0
+fi
+
+if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+    # Look for pre-existing ROCm v6 before downloading the dependencies
+    for search in "${HIP_PATH}" "${ROCM_PATH}" "/opt/rocm"; do
+        if [ -n "${search}" && -e "${search}/lib/libhipblas.so.2" ]; then
+            status "Compatible AMD GPU ROCm library detected at ${search}"
+            install_success
+            exit 0
+        fi
+    done
+
+    status "Downloading AMD GPU dependencies..."
+    curl --fail --show-error --location --progress-bar -o $TEMP_DIR/rocm-amd64-deps.tgz "${URL_PREFIX}/rocm-amd64-deps.tgz"
+    $SUDO mkdir -p /usr/share/ollama/.ollama/libs/rocm
+    $SUDO tar zxf $TEMP_DIR/rocm-amd64-deps.tgz --owner ollama -C /usr/share/ollama/.ollama/libs/rocm
+    install_success
+    status "AMD GPU dependencies installed."
     exit 0
 fi
 

@@ -1,14 +1,5 @@
 package gpu
 
-/*
-#cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
-#cgo windows LDFLAGS: -lpthread
-
-#include "gpu_info.h"
-
-*/
-import "C"
-
 import (
 	"bufio"
 	"errors"
@@ -25,10 +16,9 @@ import (
 )
 
 // Discovery logic for AMD/ROCm GPUs
-// TODO - test old drivers with this approach and make sure rocmv6 doesn't blow up on a supported GPU with old driver
 
 const (
-	curlMsg               = "curl -fsSL https://github.com/ollama/ollama/releases/download/v%s/rocm_v6-x86_64-deps.tgz | tar -zxf - -C %s"
+	curlMsg               = "curl -fsSL https://github.com/ollama/ollama/releases/download/v%s/rocm-amd64-deps.tgz | tar -zxf - -C %s"
 	DriverVersionFile     = "/sys/module/amdgpu/version"
 	AMDNodesSysfsDir      = "/sys/class/kfd/kfd/topology/nodes/"
 	GPUPropertiesFileGlob = AMDNodesSysfsDir + "*/properties"
@@ -45,10 +35,10 @@ var (
 )
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
-// ROCR_VISIBLE_DEVICES will be set if we detect a mix of unsupported and supported devices
+// HIP_VISIBLE_DEVICES will be set if we detect a mix of unsupported and supported devices
 // and the user hasn't already set this variable
 func AMDGetGPUInfo(resp *GpuInfo) {
-	// TODO - try to DRY this out with windows (needs some OS specific logic here and there...)
+	// TODO - DRY this out with windows
 	if !AMDDetected() {
 		return
 	}
@@ -64,13 +54,13 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	}
 
 	// If the user has specified exactly which GPUs to use, look up their memory
-	visibleDevices := os.Getenv("ROCR_VISIBLE_DEVICES")
+	visibleDevices := os.Getenv("HIP_VISIBLE_DEVICES")
 	if visibleDevices != "" {
 		ids := []int{}
 		for _, idStr := range strings.Split(visibleDevices, ",") {
 			id, err := strconv.Atoi(idStr)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("malformed ROCR_VISIBLE_DEVICES=%s %s", visibleDevices, err))
+				slog.Warn(fmt.Sprintf("malformed HIP_VISIBLE_DEVICES=%s %s", visibleDevices, err))
 			} else {
 				ids = append(ids, id)
 			}
@@ -126,7 +116,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
 				skip[i] = struct{}{}
 			} else {
-				slog.Debug(fmt.Sprintf("amdgpu [%d] %s is supported", i, v.ToGFXString()))
+				slog.Info(fmt.Sprintf("amdgpu [%d] %s is supported", i, v.ToGFXString()))
 			}
 		}
 	} else {
@@ -134,7 +124,7 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	}
 
 	if len(skip) >= len(gfx) {
-		slog.Debug("all detected amdgpus are skipped, falling back to CPU")
+		slog.Info("all detected amdgpus are skipped, falling back to CPU")
 		return
 	}
 
@@ -146,7 +136,6 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 	}
 	amdProcMemLookup(resp, skip, ids)
 	if resp.memInfo.DeviceCount == 0 {
-		slog.Debug("XXX device count was zero")
 		return
 	}
 	if len(skip) > 0 {
@@ -156,7 +145,6 @@ func AMDGetGPUInfo(resp *GpuInfo) {
 
 // Walk the sysfs nodes for the available GPUs and gather information from them
 // skipping over any devices in the skip map
-// If the ids list is
 func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 	resp.memInfo.DeviceCount = 0
 	resp.memInfo.TotalMemory = 0
@@ -247,8 +235,8 @@ func amdProcMemLookup(resp *GpuInfo, skip map[int]interface{}, ids []int) {
 			}
 			usedMemory += used
 		}
-		slog.Debug(fmt.Sprintf("[%d] amdgpu totalMemory %d", id, totalMemory))
-		slog.Debug(fmt.Sprintf("[%d] amdgpu freeMemory  %d", id, (totalMemory - usedMemory)))
+		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %d", id, totalMemory))
+		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %d", id, (totalMemory - usedMemory)))
 		resp.memInfo.DeviceCount++
 		resp.memInfo.TotalMemory += totalMemory
 		resp.memInfo.FreeMemory += (totalMemory - usedMemory)

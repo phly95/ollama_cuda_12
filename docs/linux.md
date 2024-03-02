@@ -10,6 +10,15 @@ Install Ollama running this one-liner:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+### Install an older version
+
+>
+
+```bash
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.27" sh
+```
+
+
 ## Manual install
 
 ### Download the `ollama` binary

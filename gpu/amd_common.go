@@ -12,12 +12,13 @@ import (
 )
 
 const (
+	// HACK!  We're lookinng for this exact name to detect iGPUs since hipGetDeviceProperties never reports integrated==true
 	iGPUName = "AMD Radeon(TM) Graphics"
 )
 
 // Determine if the given ROCm lib directory is usable by checking for existence of some glob patterns
 func rocmLibUsable(libDir string) bool {
-	slog.Debug(fmt.Sprintf("Evaluating potential rocm lib dir %s", libDir))
+	slog.Debug("evaluating potential rocm lib dir " + libDir)
 	for _, g := range ROCmLibGlobs {
 		res, _ := filepath.Glob(filepath.Join(libDir, g))
 		if len(res) == 0 {
