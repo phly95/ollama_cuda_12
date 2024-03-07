@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  dummy-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - run: |
+          go generate ./...
+          go build .
+          mkdir -p ./dist/
+          mv ollama dist/ollama-linux-amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-amd64
+          path: dist/*linux*
+  release: 
+    needs:
+      - dummy-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve built artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - run: "ls dist"
+      - uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifacts: "dist/*"
+          draft: true
+          prerelease: true
+          omitBodyDuringUpdate: true
+          generateReleaseNotes: true
+          omitDraftDuringUpdate: true
+          omitPrereleaseDuringUpdate: true
+          replacesArtifacts: true
