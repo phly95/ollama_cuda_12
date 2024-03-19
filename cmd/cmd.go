@@ -118,10 +118,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				files = append(files, filepath.Join(path, "config.json"))
 				files = append(files, filepath.Join(path, "added_tokens.json"))
 				files = append(files, filepath.Join(path, "tokenizer.model"))
+				files = append(files, filepath.Join(path, "tokenizer.json"))
 
 				for _, fn := range files {
 					f, err := os.Open(fn)
-					if os.IsNotExist(err) && strings.HasSuffix(fn, "added_tokens.json") {
+					if os.IsNotExist(err) && (strings.HasSuffix(fn, "added_tokens.json") || strings.HasSuffix(fn, "tokenizer.model")) {
 						continue
 					} else if err != nil {
 						return err

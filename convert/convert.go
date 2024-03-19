@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -171,12 +173,27 @@ type Vocab struct {
 	Tokens []string
 	Scores []float32
 	Types  []int32
+	Merges []string
 }
+
+const (
+	TokenTypeUndefined   int32 = 0
+	TokenTypeNormal      int32 = 1
+	TokenTypeUnknown     int32 = 2
+	TokenTypeControl     int32 = 3
+	TokenTypeUserDefined int32 = 4
+	TokenTypeUnused      int32 = 5
+	TokenTypeByte        int32 = 6
+)
 
 func LoadTokens(dirpath string) (*Vocab, error) {
 	slog.Info(fmt.Sprintf("reading vocab from %s", filepath.Join(dirpath, "tokenizer.model")))
 	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.model"))
 	if err != nil {
+		slog.Debug("XXX got err: ", "error", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return loadJsonTokens(dirpath)
+		}
 		return nil, err
 	}
 
@@ -253,6 +270,78 @@ func LoadTokens(dirpath string) (*Vocab, error) {
 	}
 	slog.Info(fmt.Sprintf("vocab size w/ extra tokens: %d", len(v.Tokens)))
 
+	return v, nil
+}
+
+// Note: not all fields are modeled, only what's necessary for conversion
+type AddedToken struct {
+	ID         int32  `json:"id"`
+	Content    string `json:"content"`
+	SingleWord bool   `json:"single_word"`
+	LStrip     bool   `json:"lstrip"`
+	RStrip     bool   `json:"rstrip"`
+	Normalized bool   `json:"normalized"`
+	Special    bool   `json:"special"`
+}
+
+type TokenModel struct {
+	Type   string           `json:"type"`
+	Vocab  map[string]int32 `json:"vocab"`
+	Merges []string         `json:"merges"`
+}
+type TokenizerJson struct {
+	Version     string       `json:"version"`
+	AddedTokens []AddedToken `json:"added_tokens"`
+	Model       TokenModel   `json:"model"`
+}
+
+func loadJsonTokens(dirpath string) (*Vocab, error) {
+	in, err := os.ReadFile(filepath.Join(dirpath, "tokenizer.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	tokenizer := &TokenizerJson{}
+	if err := json.Unmarshal(in, tokenizer); err != nil {
+		return nil, err
+	}
+
+	v := &Vocab{
+		Tokens: make([]string, len(tokenizer.Model.Vocab), len(tokenizer.Model.Vocab)+len(tokenizer.AddedTokens)),
+		Scores: make([]float32, 0),
+		Types:  make([]int32, len(tokenizer.Model.Vocab), len(tokenizer.Model.Vocab)+len(tokenizer.AddedTokens)),
+		Merges: make([]string, len(tokenizer.Model.Merges)),
+	}
+
+	for tok, id := range tokenizer.Model.Vocab {
+		if id < 0 || id-1 > int32(len(v.Tokens)) {
+			return nil, fmt.Errorf("malformed tokens.json: id %d greater than length %d", id, len(v.Tokens))
+		}
+		v.Tokens[id] = tok
+		v.Types[id] = TokenTypeNormal
+	}
+	for i, merge := range tokenizer.Model.Merges {
+		v.Merges[i] = merge
+	}
+
+	for _, addedToken := range tokenizer.AddedTokens {
+		if addedToken.ID >= int32(cap(v.Tokens)) {
+			return nil, fmt.Errorf("malformed tokens.json: added id %d greater than length %d", addedToken.ID, cap(v.Tokens))
+		}
+		if addedToken.ID >= int32(len(v.Tokens)) {
+			v.Tokens = v.Tokens[:int(addedToken.ID+1)]
+			v.Types = v.Types[:int(addedToken.ID+1)]
+		}
+		v.Tokens[addedToken.ID] = addedToken.Content
+		if addedToken.Special {
+			v.Types[addedToken.ID] = TokenTypeControl
+		} else {
+			v.Types[addedToken.ID] = TokenTypeNormal
+		}
+	}
+
+	slog.Info(fmt.Sprintf("vocab size: %d", len(v.Tokens)))
+	slog.Debug("XXX loaded tokenizer.json", "addedTokens", tokenizer.AddedTokens, "vocabLen", len(tokenizer.Model.Vocab))
 	return v, nil
 }
 

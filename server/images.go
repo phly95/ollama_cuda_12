@@ -665,20 +665,23 @@ func convertSafetensors(name, fn string) (string, error) {
 	SupportedArchs := []string{
 		"MistralForCausalLM",
 		"GemmaForCausalLM",
+		"Qwen2ForCausalLM",
 	}
 
+	slog.Debug(fmt.Sprintf("XXX %+v", params))
 	for _, arch := range params.Architectures {
+		slog.Debug("XXX params.Architectures " + arch)
 		if !slices.Contains(SupportedArchs, arch) {
 			return "", fmt.Errorf("this safetensors model is not yet supported")
 		}
 	}
 
-	t, err := convert.GetSafeTensors(tempDir)
+	vocab, err := convert.LoadTokens(tempDir)
 	if err != nil {
 		return "", err
 	}
 
-	vocab, err := convert.LoadTokens(tempDir)
+	t, err := convert.GetSafeTensors(tempDir)
 	if err != nil {
 		return "", err
 	}
