@@ -23,20 +23,21 @@ import (
 )
 
 type Params struct {
-	Architectures    []string `json:"architectures"`
-	VocabSize        int      `json:"vocab_size"`
-	HiddenSize       int      `json:"hidden_size"`       // n_embd
-	HiddenLayers     int      `json:"num_hidden_layers"` // n_layer
-	ContextSize      int      `json:"max_position_embeddings"`
-	IntermediateSize int      `json:"intermediate_size"`
-	AttentionHeads   int      `json:"num_attention_heads"` // n_head
-	KeyValHeads      int      `json:"num_key_value_heads"`
-	NormEPS          float64  `json:"rms_norm_eps"`
-	RopeFreqBase     float64  `json:"rope_theta"`
-	BoSTokenID       int      `json:"bos_token_id"`
-	EoSTokenID       int      `json:"eos_token_id"`
-	HeadDimension    int      `json:"head_dim"`
-	PaddingTokenID   int      `json:"pad_token_id"`
+	Architectures       []string `json:"architectures"`
+	VocabSize           int      `json:"vocab_size"`
+	HiddenSize          int      `json:"hidden_size"`       // n_embd
+	HiddenLayers        int      `json:"num_hidden_layers"` // n_layer
+	ContextSize         int      `json:"max_position_embeddings"`
+	IntermediateSize    int      `json:"intermediate_size"`
+	AttentionHeads      int      `json:"num_attention_heads"` // n_head
+	KeyValHeads         int      `json:"num_key_value_heads"`
+	NormEPS             float64  `json:"rms_norm_eps"`
+	RopeFreqBase        float64  `json:"rope_theta"`
+	BoSTokenID          int      `json:"bos_token_id"`
+	EoSTokenID          int      `json:"eos_token_id"`
+	HeadDimension       int      `json:"head_dim"`
+	PaddingTokenID      int      `json:"pad_token_id"`
+	UseParallelResidual bool     `json:"use_parallel_residual"`
 }
 
 type MetaData struct {
@@ -121,7 +122,7 @@ func ReadSafeTensors(fn string, offset uint64) ([]llm.Tensor, uint64, error) {
 			OffsetPadding: 8 + jsonSize,
 			FileOffsets:   []uint64{uint64(data.Offsets[0]), uint64(data.Offsets[1])},
 		}
-		slog.Debug(fmt.Sprintf("%v", t))
+		slog.Debug(fmt.Sprintf("%+v", t))
 		tensors = append(tensors, t)
 		offset += size
 	}
@@ -354,9 +355,12 @@ func GetTensorName(n string) (string, error) {
 		"model.layers.(\\d+).mlp.up_proj.weight":              "blk.$1.ffn_up.weight",
 		"model.layers.(\\d+).post_attention_layernorm.weight": "blk.$1.ffn_norm.weight",
 		"model.layers.(\\d+).self_attn.k_proj.weight":         "blk.$1.attn_k.weight",
+		"model.layers.(\\d+).self_attn.k_proj.bias":           "blk.$1.attn_k.bias",
 		"model.layers.(\\d+).self_attn.o_proj.weight":         "blk.$1.attn_output.weight",
 		"model.layers.(\\d+).self_attn.q_proj.weight":         "blk.$1.attn_q.weight",
+		"model.layers.(\\d+).self_attn.q_proj.bias":           "blk.$1.attn_q.bias",
 		"model.layers.(\\d+).self_attn.v_proj.weight":         "blk.$1.attn_v.weight",
+		"model.layers.(\\d+).self_attn.v_proj.bias":           "blk.$1.attn_v.bias",
 		"lm_head.weight":    "output.weight",
 		"model.norm.weight": "output_norm.weight",
 	}
@@ -393,6 +397,8 @@ func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) 
 			arch = "llama"
 		case "GemmaForCausalLM":
 			arch = "gemma"
+		case "Qwen2ForCausalLM":
+			arch = "qwen2"
 		default:
 			return "", fmt.Errorf("Models based on '%s' are not yet supported", params.Architectures[0])
 		}
@@ -428,6 +434,15 @@ func WriteGGUF(name string, tensors []llm.Tensor, params *Params, vocab *Vocab) 
 		m.KV["gemma.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
 		m.KV["gemma.attention.key_length"] = uint32(params.HeadDimension)
 		m.KV["gemma.attention.value_length"] = uint32(params.HeadDimension)
+	case "qwen2":
+		m.KV["qwen2.context_length"] = uint32(params.ContextSize)
+		m.KV["qwen2.embedding_length"] = uint32(params.HiddenSize)
+		m.KV["qwen2.block_count"] = uint32(params.HiddenLayers)
+		m.KV["qwen2.feed_forward_length"] = uint32(params.IntermediateSize)
+		m.KV["qwen2.attention.head_count"] = uint32(params.AttentionHeads)
+		m.KV["qwen2.attention.head_count_kv"] = uint32(params.KeyValHeads)
+		m.KV["qwen2.attention.layer_norm_rms_epsilon"] = float32(params.NormEPS)
+		m.KV["qwen2.use_parallel_residual"] = params.UseParallelResidual
 	}
 
 	m.KV["general.file_type"] = uint32(1)
