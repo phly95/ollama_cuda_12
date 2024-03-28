@@ -1,0 +1,20 @@
+name: latest
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  update-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch images
+        env:
+          ARCH_IMAGE_REPO: dhiltgen/release
+          FINAL_IMAGE_REPO: dhiltgen/ollama
+          # PUSH: "1"
+        run: |
+          export "VERSION=${GITHUB_REF_NAME#v}"
+          env
+          ./scripts/tag_latest.sh
