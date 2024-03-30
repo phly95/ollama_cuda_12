@@ -228,3 +228,11 @@ To unload the model and free up memory use:
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama2", "keep_alive": 0}'
 ```
+
+## How do I support more concurrent requests to the same model?
+
+By default Ollama currently supports 1 concurrent requests to a loaded model.  You can change this by setting `OLLAMA_NUM_PARALLEL` to a number greater than zero.
+
+## How do I load multiple different models at the same time?
+
+By default Ollama currently supports a single model at a time.  To enable multiple concurrent models, set `OLLAMA_MAX_RUNNERS`.  A value less than 1 will allow Ollama to load as many models as will fit in the available VRAM.  A value of 1 or greater will limit the number of models to no more than that value.

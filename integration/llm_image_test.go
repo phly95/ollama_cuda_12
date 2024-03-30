@@ -29,7 +29,8 @@ func TestIntegrationMultimodal(t *testing.T) {
 		},
 	}
 
-	resp := "the ollamas"
+	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+	resp := "the ollam"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{resp})

@@ -15,11 +15,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -53,87 +50,7 @@ func init() {
 	gin.SetMode(mode)
 }
 
-var loaded struct {
-	mu sync.Mutex
-
-	llama *llm.LlamaServer
-
-	expireTimer *time.Timer
-
-	model      string
-	adapters   []string
-	projectors []string
-	*api.Options
-}
-
 var defaultSessionDuration = 5 * time.Minute
-
-func unload() {
-	if loaded.llama != nil {
-		loaded.llama.Close()
-	}
-
-	loaded.llama = nil
-	loaded.model = ""
-	loaded.adapters = nil
-	loaded.projectors = nil
-	loaded.Options = nil
-}
-
-// load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	ctx, cancel := context.WithTimeout(c, 10*time.Second)
-	defer cancel()
-
-	needLoad := loaded.llama == nil || // is there a model loaded?
-		loaded.model != model.ModelPath || // has the base model changed?
-		!reflect.DeepEqual(loaded.adapters, model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.projectors, model.ProjectorPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.Options.Runner, opts.Runner) || // have the runner options changed?
-		loaded.llama.Ping(ctx) != nil
-
-	if needLoad {
-		if loaded.llama != nil {
-			slog.Info("changing loaded model")
-			unload()
-		}
-
-		llama, err := llm.NewLlamaServer(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
-		if err != nil {
-			// some older models are not compatible with newer versions of llama.cpp
-			// show a generalized compatibility error until there is a better way to
-			// check for model compatibility
-			if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
-				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
-			}
-
-			return err
-		}
-
-		loaded.model = model.ModelPath
-		loaded.adapters = model.AdapterPaths
-		loaded.projectors = model.ProjectorPaths
-		loaded.llama = llama
-		loaded.Options = &opts
-
-		if err = llama.WaitUntilRunning(); err != nil {
-			slog.Error("error loading llama server", "error", err)
-			unload()
-			return err
-		}
-	}
-
-	if loaded.expireTimer == nil {
-		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
-			loaded.mu.Lock()
-			defer loaded.mu.Unlock()
-			unload()
-		})
-	}
-
-	loaded.expireTimer.Reset(sessionDuration)
-	return nil
-}
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -155,8 +72,6 @@ func isSupportedImageType(image []byte) bool {
 }
 
 func GenerateHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
 
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -224,10 +139,17 @@ func GenerateHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := getRunner(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	err = runner.Use()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer runner.Release()
 
 	// an empty request loads the model
 	// note: for a short while template was used in lieu
@@ -275,7 +197,7 @@ func GenerateHandler(c *gin.Context) {
 
 		sb.Reset()
 		if req.Context != nil {
-			prev, err := loaded.llama.Detokenize(c.Request.Context(), req.Context)
+			prev, err := runner.llama.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -298,7 +220,7 @@ func GenerateHandler(c *gin.Context) {
 
 		fn := func(r llm.CompletionResponse) {
 			// Update model expiration
-			loaded.expireTimer.Reset(sessionDuration)
+			runner.expireTimer.Reset(sessionDuration)
 
 			// Build up the full response
 			if _, err := generated.WriteString(r.Content); err != nil {
@@ -331,7 +253,7 @@ func GenerateHandler(c *gin.Context) {
 					}
 
 					// TODO (jmorganca): encode() should not strip special tokens
-					tokens, err := loaded.llama.Tokenize(c.Request.Context(), p)
+					tokens, err := runner.llama.Tokenize(c.Request.Context(), p)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
@@ -359,7 +281,7 @@ func GenerateHandler(c *gin.Context) {
 			Images:  images,
 			Options: opts,
 		}
-		if err := loaded.llama.Completion(c.Request.Context(), req, fn); err != nil {
+		if err := runner.llama.Completion(c.Request.Context(), req, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -422,9 +344,6 @@ func getDefaultSessionDuration() time.Duration {
 }
 
 func EmbeddingsHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
 	var req api.EmbeddingRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -469,10 +388,17 @@ func EmbeddingsHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := getRunner(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	err = runner.Use()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer runner.Release()
 
 	// an empty request loads the model
 	if req.Prompt == "" {
@@ -480,7 +406,7 @@ func EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := loaded.llama.Embedding(c.Request.Context(), req.Prompt)
+	embedding, err := runner.llama.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -1150,7 +1076,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		unload()
+		unloadAllRunners()
 		gpu.Cleanup()
 		os.Exit(0)
 	}()
@@ -1158,12 +1084,10 @@ func Serve(ln net.Listener) error {
 	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
-	if runtime.GOOS == "linux" { // TODO - windows too
-		// check compatibility to log warnings
-		if _, err := gpu.CheckVRAM(); err != nil {
-			slog.Info(err.Error())
-		}
-	}
+
+	// At startup we retrieve GPU information so we can get log messages before loading a model
+	// This will log warnings to the log in case we have problems with detected GPUs
+	_ = gpu.GetGPUInfo()
 
 	return srvr.Serve(ln)
 }
@@ -1219,9 +1143,9 @@ func streamResponse(c *gin.Context, ch chan any) {
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
-func chatPrompt(ctx context.Context, template string, messages []api.Message, numCtx int) (string, error) {
+func chatPrompt(ctx context.Context, runner *runnerRef, template string, messages []api.Message, numCtx int) (string, error) {
 	encode := func(s string) ([]int, error) {
-		return loaded.llama.Tokenize(ctx, s)
+		return runner.llama.Tokenize(ctx, s)
 	}
 
 	prompt, err := ChatPrompt(template, messages, numCtx, encode)
@@ -1233,9 +1157,6 @@ func chatPrompt(ctx context.Context, template string, messages []api.Message, nu
 }
 
 func ChatHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
 	checkpointStart := time.Now()
 
 	var req api.ChatRequest
@@ -1292,10 +1213,17 @@ func ChatHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := getRunner(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	err = runner.Use()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer runner.Release()
 
 	checkpointLoaded := time.Now()
 
@@ -1309,7 +1237,7 @@ func ChatHandler(c *gin.Context) {
 		}, req.Messages...)
 	}
 
-	prompt, err := chatPrompt(c.Request.Context(), model.Template, req.Messages, opts.NumCtx)
+	prompt, err := chatPrompt(c.Request.Context(), runner, model.Template, req.Messages, opts.NumCtx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1353,7 +1281,7 @@ func ChatHandler(c *gin.Context) {
 
 		fn := func(r llm.CompletionResponse) {
 			// Update model expiration
-			loaded.expireTimer.Reset(sessionDuration)
+			runner.expireTimer.Reset(sessionDuration)
 
 			resp := api.ChatResponse{
 				Model:     req.Model,
@@ -1376,7 +1304,7 @@ func ChatHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		if err := loaded.llama.Completion(c.Request.Context(), llm.CompletionRequest{
+		if err := runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Format:  req.Format,
 			Images:  images,
