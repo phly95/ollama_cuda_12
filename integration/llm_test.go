@@ -60,10 +60,9 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
+			// TODO re-wire this to support streaming so we can verify that responses for both are concurrent
 			GenerateTestHelper(ctx, t, &http.Client{}, req[i], resp[i])
 		}(i)
 	}
 	wg.Wait()
 }
-
-// TODO - create a parallel test with 2 different models once we support concurrency

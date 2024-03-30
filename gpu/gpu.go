@@ -25,8 +25,8 @@ import (
 )
 
 type handles struct {
-	nvml   *C.nvml_handle_t
-	cudart *C.cudart_handle_t
+	num_devices int
+	cudart      *C.cudart_handle_t
 }
 
 const (
@@ -39,26 +39,10 @@ var gpuMutex sync.Mutex
 // With our current CUDA compile flags, older than 5.0 will not work properly
 var CudaComputeMin = [2]C.int{5, 0}
 
-// Possible locations for the nvidia-ml library
-var NvmlLinuxGlobs = []string{
-	"/usr/local/cuda/lib64/libnvidia-ml.so*",
-	"/usr/lib/x86_64-linux-gnu/nvidia/current/libnvidia-ml.so*",
-	"/usr/lib/x86_64-linux-gnu/libnvidia-ml.so*",
-	"/usr/lib/wsl/lib/libnvidia-ml.so*",
-	"/usr/lib/wsl/drivers/*/libnvidia-ml.so*",
-	"/opt/cuda/lib64/libnvidia-ml.so*",
-	"/usr/lib*/libnvidia-ml.so*",
-	"/usr/lib/aarch64-linux-gnu/nvidia/current/libnvidia-ml.so*",
-	"/usr/lib/aarch64-linux-gnu/libnvidia-ml.so*",
-	"/usr/local/lib*/libnvidia-ml.so*",
+var RocmComputeMin = 9
 
-	// TODO: are these stubs ever valid?
-	"/opt/cuda/targets/x86_64-linux/lib/stubs/libnvidia-ml.so*",
-}
-
-var NvmlWindowsGlobs = []string{
-	"c:\\Windows\\System32\\nvml.dll",
-}
+// TODO find a better way to detect iGPU instead of minimum memory
+const IGPUMemLimit = 1024 * 1024 * 1024 // 512G is what they typically report, so anything less than 1G must be iGPU
 
 var CudartLinuxGlobs = []string{
 	"/usr/local/cuda/lib64/libcudart.so*",
@@ -88,26 +72,18 @@ func initGPUHandles() *handles {
 
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
-	gpuHandles := &handles{nil, nil}
-	var nvmlMgmtName string
-	var nvmlMgmtPatterns []string
+	gpuHandles := &handles{}
 	var cudartMgmtName string
 	var cudartMgmtPatterns []string
 
 	tmpDir, _ := PayloadsDir()
 	switch runtime.GOOS {
 	case "windows":
-		nvmlMgmtName = "nvml.dll"
-		nvmlMgmtPatterns = make([]string, len(NvmlWindowsGlobs))
-		copy(nvmlMgmtPatterns, NvmlWindowsGlobs)
 		cudartMgmtName = "cudart64_*.dll"
 		localAppData := os.Getenv("LOCALAPPDATA")
 		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", cudartMgmtName)}
 		cudartMgmtPatterns = append(cudartMgmtPatterns, CudartWindowsGlobs...)
 	case "linux":
-		nvmlMgmtName = "libnvidia-ml.so"
-		nvmlMgmtPatterns = make([]string, len(NvmlLinuxGlobs))
-		copy(nvmlMgmtPatterns, NvmlLinuxGlobs)
 		cudartMgmtName = "libcudart.so*"
 		if tmpDir != "" {
 			// TODO - add "payloads" for subprocess
@@ -118,31 +94,21 @@ func initGPUHandles() *handles {
 		return gpuHandles
 	}
 
-	slog.Info("Detecting GPU type")
+	slog.Info("Detecting GPUs")
 	cudartLibPaths := FindGPULibs(cudartMgmtName, cudartMgmtPatterns)
 	if len(cudartLibPaths) > 0 {
-		cudart := LoadCUDARTMgmt(cudartLibPaths)
+		num_devices, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
 		if cudart != nil {
-			slog.Info("Nvidia GPU detected via cudart")
+			slog.Info(fmt.Sprintf("%s reports %d GPUs present", libPath, num_devices))
 			gpuHandles.cudart = cudart
-			return gpuHandles
-		}
-	}
-
-	// TODO once we build confidence, remove this and the gpu_info_nvml.[ch] files
-	nvmlLibPaths := FindGPULibs(nvmlMgmtName, nvmlMgmtPatterns)
-	if len(nvmlLibPaths) > 0 {
-		nvml := LoadNVMLMgmt(nvmlLibPaths)
-		if nvml != nil {
-			slog.Info("Nvidia GPU detected via nvidia-ml")
-			gpuHandles.nvml = nvml
+			gpuHandles.num_devices = num_devices
 			return gpuHandles
 		}
 	}
 	return gpuHandles
 }
 
-func GetGPUInfo() GpuInfo {
+func GetGPUInfo() GpuInfoList {
 	// TODO - consider exploring lspci (and equivalent on windows) to check for
 	// GPUs so we can report warnings if we see Nvidia/AMD but fail to load the libraries
 	gpuMutex.Lock()
@@ -150,9 +116,6 @@ func GetGPUInfo() GpuInfo {
 
 	gpuHandles := initGPUHandles()
 	defer func() {
-		if gpuHandles.nvml != nil {
-			C.nvml_release(*gpuHandles.nvml)
-		}
 		if gpuHandles.cudart != nil {
 			C.cudart_release(*gpuHandles.cudart)
 		}
@@ -165,68 +128,59 @@ func GetGPUInfo() GpuInfo {
 	}
 
 	var memInfo C.mem_info_t
-	resp := GpuInfo{}
-	if gpuHandles.nvml != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
-		C.nvml_check_vram(*gpuHandles.nvml, &memInfo)
+	resp := []GpuInfo{}
+
+	// NVIDIA first
+	for i := 0; i < gpuHandles.num_devices; i++ {
+		// TODO once we support CPU compilation variants of GPU libraries refine this...
+		if cpuVariant == "" && runtime.GOARCH == "amd64" {
+			continue
+		}
+		gpuInfo := GpuInfo{
+			Library: "cuda",
+		}
+		C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
 		if memInfo.err != nil {
-			slog.Info(fmt.Sprintf("[nvidia-ml] error looking up NVML GPU memory: %s", C.GoString(memInfo.err)))
+			slog.Info(fmt.Sprintf("error looking up nvidia GPU memory: %s", C.GoString(memInfo.err)))
 			C.free(unsafe.Pointer(memInfo.err))
-		} else if memInfo.count > 0 {
-			// Verify minimum compute capability
-			var cc C.nvml_compute_capability_t
-			C.nvml_compute_capability(*gpuHandles.nvml, &cc)
-			if cc.err != nil {
-				slog.Info(fmt.Sprintf("[nvidia-ml] error looking up NVML GPU compute capability: %s", C.GoString(cc.err)))
-				C.free(unsafe.Pointer(cc.err))
-			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
-				slog.Info(fmt.Sprintf("[nvidia-ml] NVML CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
-				resp.Library = "cuda"
-				resp.MinimumMemory = cudaMinimumMemory
-			} else {
-				slog.Info(fmt.Sprintf("[nvidia-ml] CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
-			}
+			continue
 		}
-	} else if gpuHandles.cudart != nil && (cpuVariant != "" || runtime.GOARCH != "amd64") {
-		C.cudart_check_vram(*gpuHandles.cudart, &memInfo)
-		if memInfo.err != nil {
-			slog.Info(fmt.Sprintf("[cudart] error looking up CUDART GPU memory: %s", C.GoString(memInfo.err)))
-			C.free(unsafe.Pointer(memInfo.err))
-		} else if memInfo.count > 0 {
-			// Verify minimum compute capability
-			var cc C.cudart_compute_capability_t
-			C.cudart_compute_capability(*gpuHandles.cudart, &cc)
-			if cc.err != nil {
-				slog.Info(fmt.Sprintf("[cudart] error looking up CUDA compute capability: %s", C.GoString(cc.err)))
-				C.free(unsafe.Pointer(cc.err))
-			} else if cc.major > CudaComputeMin[0] || (cc.major == CudaComputeMin[0] && cc.minor >= CudaComputeMin[1]) {
-				slog.Info(fmt.Sprintf("[cudart] CUDART CUDA Compute Capability detected: %d.%d", cc.major, cc.minor))
-				resp.Library = "cuda"
-				resp.MinimumMemory = cudaMinimumMemory
-			} else {
-				slog.Info(fmt.Sprintf("[cudart] CUDA GPU is too old. Falling back to CPU mode. Compute Capability detected: %d.%d", cc.major, cc.minor))
-			}
+		if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
+			slog.Info(fmt.Sprintf("[%d] CUDA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
+			continue
 		}
-	} else {
-		AMDGetGPUInfo(&resp)
-		if resp.Library != "" {
-			resp.MinimumMemory = rocmMinimumMemory
-			return resp
-		}
-	}
-	if resp.Library == "" {
-		C.cpu_check_ram(&memInfo)
-		resp.Library = "cpu"
-		resp.Variant = cpuVariant
-	}
-	if memInfo.err != nil {
-		slog.Info(fmt.Sprintf("error looking up CPU memory: %s", C.GoString(memInfo.err)))
-		C.free(unsafe.Pointer(memInfo.err))
-		return resp
+		gpuInfo.TotalMemory = uint64(memInfo.total)
+		gpuInfo.FreeMemory = uint64(memInfo.free)
+		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+		gpuInfo.Major = int(memInfo.major)
+		gpuInfo.Minor = int(memInfo.minor)
+		gpuInfo.MinimumMemory = cudaMinimumMemory
+
+		// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+		resp = append(resp, gpuInfo)
 	}
 
-	resp.DeviceCount = uint32(memInfo.count)
-	resp.FreeMemory = uint64(memInfo.free)
-	resp.TotalMemory = uint64(memInfo.total)
+	// Then AMD
+	resp = append(resp, AMDGetGPUInfo()...)
+
+	if len(resp) == 0 {
+		C.cpu_check_ram(&memInfo)
+		if memInfo.err != nil {
+			slog.Info(fmt.Sprintf("error looking up CPU memory: %s", C.GoString(memInfo.err)))
+			C.free(unsafe.Pointer(memInfo.err))
+			return resp
+		}
+		gpuInfo := GpuInfo{
+			Library: "cpu",
+			Variant: cpuVariant,
+		}
+		gpuInfo.TotalMemory = uint64(memInfo.total)
+		gpuInfo.FreeMemory = uint64(memInfo.free)
+		gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+
+		resp = append(resp, gpuInfo)
+	}
+
 	return resp
 }
 
@@ -243,6 +197,7 @@ func getCPUMem() (memInfo, error) {
 	return ret, nil
 }
 
+// TODO clean up call sites to this routine so we don't do back-to-back calls any more
 func CheckVRAM() (int64, error) {
 	userLimit := os.Getenv("OLLAMA_MAX_VRAM")
 	if userLimit != "" {
@@ -253,9 +208,10 @@ func CheckVRAM() (int64, error) {
 		slog.Info(fmt.Sprintf("user override OLLAMA_MAX_VRAM=%d", avail))
 		return avail, nil
 	}
+	// TODO - this wrong, quick hack to get things compiling...
 	gpuInfo := GetGPUInfo()
-	if gpuInfo.FreeMemory > 0 && (gpuInfo.Library == "cuda" || gpuInfo.Library == "rocm") {
-		return int64(gpuInfo.FreeMemory), nil
+	if gpuInfo[0].FreeMemory > 0 && (gpuInfo[0].Library == "cuda" || gpuInfo[0].Library == "rocm") {
+		return int64(gpuInfo[0].FreeMemory), nil
 	}
 
 	return 0, fmt.Errorf("no GPU detected") // TODO - better handling of CPU based memory determiniation
@@ -265,7 +221,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
 	var ldPaths []string
 	gpuLibPaths := []string{}
-	slog.Info(fmt.Sprintf("Searching for GPU management library %s", baseLibName))
+	slog.Debug(fmt.Sprintf("Searching for GPU management library %s", baseLibName))
 
 	switch runtime.GOOS {
 	case "windows":
@@ -283,7 +239,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 		}
 		patterns = append(patterns, filepath.Join(d, baseLibName+"*"))
 	}
-	slog.Debug(fmt.Sprintf("gpu management search paths: %v", patterns))
+	slog.Debug(fmt.Sprintf("gpu library search paths: %v", patterns))
 	for _, pattern := range patterns {
 		// Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
@@ -311,28 +267,11 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 			}
 		}
 	}
-	slog.Info(fmt.Sprintf("Discovered GPU libraries: %v", gpuLibPaths))
+	slog.Debug(fmt.Sprintf("discovered GPU libraries: %v", gpuLibPaths))
 	return gpuLibPaths
 }
 
-func LoadNVMLMgmt(nvmlLibPaths []string) *C.nvml_handle_t {
-	var resp C.nvml_init_resp_t
-	resp.ch.verbose = getVerboseState()
-	for _, libPath := range nvmlLibPaths {
-		lib := C.CString(libPath)
-		defer C.free(unsafe.Pointer(lib))
-		C.nvml_init(lib, &resp)
-		if resp.err != nil {
-			slog.Info(fmt.Sprintf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err)))
-			C.free(unsafe.Pointer(resp.err))
-		} else {
-			return &resp.ch
-		}
-	}
-	return nil
-}
-
-func LoadCUDARTMgmt(cudartLibPaths []string) *C.cudart_handle_t {
+func LoadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string) {
 	var resp C.cudart_init_resp_t
 	resp.ch.verbose = getVerboseState()
 	for _, libPath := range cudartLibPaths {
@@ -340,13 +279,13 @@ func LoadCUDARTMgmt(cudartLibPaths []string) *C.cudart_handle_t {
 		defer C.free(unsafe.Pointer(lib))
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
-			slog.Info(fmt.Sprintf("Unable to load cudart CUDA management library %s: %s", libPath, C.GoString(resp.err)))
+			slog.Debug("Unable to load cudart", "library", libPath, "error", C.GoString(resp.err))
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			return &resp.ch
+			return int(resp.num_devices), &resp.ch, libPath
 		}
 	}
-	return nil
+	return 0, nil, ""
 }
 
 func getVerboseState() C.uint16_t {
@@ -354,4 +293,24 @@ func getVerboseState() C.uint16_t {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)
+}
+
+// Given the list of GPUs this instantiation is targeted for,
+// figure out the visible devices environment variable
+//
+// If different libraries are detected, the first one is what we use
+// TODO consider mixed a bug here?
+func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
+	if len(l) == 0 {
+		return "", ""
+	}
+	switch l[0].Library {
+	case "cuda":
+		return cudaGetVisibleDevicesEnv(l)
+	case "rocm":
+		return rocmGetVisibleDevicesEnv(l)
+	default:
+		slog.Debug("no filter required for library " + l[0].Library)
+		return "", ""
+	}
 }

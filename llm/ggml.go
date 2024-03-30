@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"slices"
 	"strings"
 )
 
@@ -21,6 +23,14 @@ func (ggml *GGML) LayerSize(prefix string) (n int64) {
 	}
 
 	return
+}
+
+func (ggml *GGML) IsCPUOnlyModel() bool {
+	if slices.Contains(cpuOnlyFamilies, ggml.KV().Architecture()) {
+		slog.Debug("CPU only model")
+		return true
+	}
+	return false
 }
 
 const (

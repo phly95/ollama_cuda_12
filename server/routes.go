@@ -16,7 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
-	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,12 +53,16 @@ func init() {
 	gin.SetMode(mode)
 }
 
-var loaded struct {
-	mu sync.Mutex
+type runnerRef struct {
+	refMu    sync.Mutex
+	refCond  sync.Cond
+	refCount uint
 
 	llama *llm.LlamaServer
+	gpus  gpu.GpuInfoList // Recorded at time of provisioning
 
-	expireTimer *time.Timer
+	sessionDuration time.Duration
+	expireTimer     *time.Timer
 
 	model      string
 	adapters   []string
@@ -66,32 +70,197 @@ var loaded struct {
 	*api.Options
 }
 
+func (runner *runnerRef) Use() {
+	runner.refMu.Lock()
+	defer runner.refMu.Unlock()
+	// TODO implement upper bound on number of in-flight requests?
+	runner.refCount++
+}
+
+func (runner *runnerRef) Release() {
+	runner.refMu.Lock()
+	defer runner.refMu.Unlock()
+	runner.refCount--
+	if runner.refCount == 0 {
+		runner.refCond.Signal()
+	}
+}
+
+var loadedMu sync.Mutex
+var loaded = map[string]*runnerRef{}
+
+type ByExpiration []*runnerRef
+
+func (a ByExpiration) Len() int           { return len(a) }
+func (a ByExpiration) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByExpiration) Less(i, j int) bool { return a[i].sessionDuration < a[j].sessionDuration }
+
 var defaultSessionDuration = 5 * time.Minute
 
-// load a model into memory if it is not already loaded, it is up to the caller to lock loaded.mu before calling this function
-func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) error {
-	ctx, cancel := context.WithTimeout(c, 10*time.Second)
-	defer cancel()
+// Only allow the load func to run one at a time
+var loadMu sync.Mutex
 
-	needLoad := loaded.llama == nil || // is there a model loaded?
-		loaded.model != model.ModelPath || // has the base model changed?
-		!reflect.DeepEqual(loaded.adapters, model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.projectors, model.ProjectorPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.Options.Runner, opts.Runner) || // have the runner options changed?
-		loaded.llama.Ping(ctx) != nil
+// load a model into memory if it is not already loaded
+func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) (*runnerRef, error) {
+	loadMu.Lock()
+	defer loadMu.Unlock()
 
-	if needLoad {
-		if loaded.llama != nil {
-			slog.Info("changing loaded model")
-			loaded.llama.Close()
-			loaded.llama = nil
-			loaded.model = ""
-			loaded.adapters = nil
-			loaded.projectors = nil
-			loaded.Options = nil
+	loadedMu.Lock()
+	runner := loaded[model.ModelPath]
+	loadedMu.Unlock()
+
+	var gpus gpu.GpuInfoList
+	var ggml *llm.GGML
+
+	if runner != nil {
+		runner.refMu.Lock()
+		defer runner.refMu.Unlock()
+		// Ignore the NumGPU settings
+		optsExisting := runner.Options.Runner
+		optsExisting.NumGPU = -1
+		optsNew := opts.Runner
+		optsNew.NumGPU = -1
+		ctx, cancel := context.WithTimeout(c, 10*time.Second) // BUG - 2 rapid requests to the same model that is taking a long time to load probably fails this test
+		defer cancel()
+		if !reflect.DeepEqual(runner.adapters, model.AdapterPaths) || // have the adapters changed?
+			!reflect.DeepEqual(runner.projectors, model.ProjectorPaths) || // have the projectors changed?
+			!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+			runner.llama.Ping(ctx) != nil {
+			if runner.refCount > 0 {
+				slog.Debug("runner reload required, but active requests in flight...")
+				runner.refCond.Wait()
+			}
+			slog.Info("changing loaded model to update settings")
+			runner.llama.Close()
+			runner.llama = nil
+			runner.adapters = nil
+			runner.projectors = nil
+			runner.Options = nil
+			runner = nil
+		}
+	}
+	if runner == nil {
+		var err error
+		ggml, err = llm.LoadModel(model.ModelPath)
+		if err != nil {
+			return nil, err
+		}
+		loadedMu.Lock()
+		for len(loaded) > 0 {
+			slog.Debug("attempting to fit new model with existing models running", "runner_count", len(loaded))
+
+			gpus = gpu.GetGPUInfo()
+			if ggml.IsCPUOnlyModel() || (len(gpus) == 1 && gpus[0].Library == "cpu") {
+				// TODO evaluate system memory to see if we should block the load
+				slog.Debug("CPU mode, allowing multiple model loads")
+				break
+			}
+
+			// Memory usage of loaded runners ramps up as they load the model,
+			// even after NewLlamaServer returns and can fluctuate over time so
+			// we can't trust the snapshot from GPUInfo as a true metric for
+			// available space. We'll instead rely on our predictions of the size
+			// of the other models.
+			// Note: we can't even get free VRAM metrics for metal or rocm+windows
+
+			// TODO we should expose some user supported way to reserve a buffer per GPU and add that in here
+
+			type predKey struct {
+				Library string
+				ID      string
+			}
+			predMap := map[predKey]uint64{} // Sum up the total predicted usage per GPU for all runners
+			for _, r := range loaded {
+				r.refMu.Lock()
+				gpuIDs := make([]string, 0, len(r.gpus))
+				if r.llama != nil {
+
+					// TODO this should be broken down by GPU instead of assuming uniform spread
+					estimatedVRAMPerGPU := r.llama.EstimatedVRAM / uint64(len(r.gpus))
+					for _, gpu := range r.gpus {
+						gpuIDs = append(gpuIDs, gpu.ID)
+					}
+					for _, gpu := range gpus {
+						if slices.Contains(gpuIDs, gpu.ID) {
+							predMap[predKey{gpu.Library, gpu.ID}] += estimatedVRAMPerGPU
+						}
+					}
+				} else {
+					slog.Warn("XXX unexpected nil runner reference")
+				}
+				r.refMu.Unlock()
+			}
+
+			// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
+			for i := range gpus {
+				if p, ok := predMap[predKey{gpus[i].Library, gpus[i].ID}]; ok {
+
+					// TODO - remove this once things are stable, until then, compare our numbers vs. what the GPU reports
+					slog.Debug(fmt.Sprintf("[%s] before update %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
+
+					if p > gpus[i].TotalMemory {
+						// Shouldn't happen
+						slog.Warn("XXX predicted usage exceeds VRAM", "ID", gpus[i].ID, "totalMemory", gpus[i].TotalMemory, "predicted", p)
+						gpus[i].FreeMemory = 0
+					} else {
+						gpus[i].FreeMemory = gpus[i].TotalMemory - p
+					}
+					slog.Info(fmt.Sprintf("[%s] updated %s totalMemory %dM", gpus[i].ID, gpus[i].Library, gpus[i].TotalMemory/1024/1024))
+					slog.Info(fmt.Sprintf("[%s] updated %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
+				}
+			}
+
+			if fits, _ := llm.PredictServerFit(gpus, ggml, model.AdapterPaths, model.ProjectorPaths, opts); fits {
+				slog.Debug("new model will fit in VRAM, loading")
+				break
+			}
+
+			// If we get to here, then we have GPUs, and can't fit the new model in VRAM
+			// Find the best candidate model to unload
+			// Unload the model with the shortest remaining >= sessionDuration (negative duration never unloads)
+			runnerList := make([]*runnerRef, 0, len(loaded))
+			for _, r := range loaded {
+				runnerList = append(runnerList, r)
+			}
+
+			// TODO - enhance this algorithm to be able to better choose which models to displace
+			sort.Sort(ByExpiration(runnerList))
+			// TODO - potentially loop looking for zero ref count instead of waiting
+			r := runnerList[0]
+
+			r.refMu.Lock()
+			defer r.refMu.Unlock()
+			if r.refCount > 0 {
+				slog.Info("waiting for pending requests to drain before unloading", "old_model", r.model)
+				// TODO - prevent new requests from coming in
+				r.refCond.Wait()
+			}
+			slog.Info("insufficient VRAM to fit new model, unloading one", "old_model", r.model, "new_model", model.ModelPath)
+			if r.expireTimer != nil {
+				r.expireTimer.Stop()
+			}
+			r.llama.Close()
+			r.llama = nil
+			r.adapters = nil
+			r.projectors = nil
+			r.Options = nil
+			r.gpus = nil
+			delete(loaded, r.model)
 		}
 
-		llama, err := llm.NewLlamaServer(model.ModelPath, model.AdapterPaths, model.ProjectorPaths, opts)
+		runner = &runnerRef{}
+		runner.refCond.L = &runner.refMu
+		runner.refMu.Lock()
+		defer runner.refMu.Unlock()
+		loaded[model.ModelPath] = runner
+		slog.Info("loaded runners", "count", len(loaded))
+		loadedMu.Unlock()
+
+		if len(gpus) == 0 {
+			gpus = gpu.GetGPUInfo()
+		}
+
+		llama, err := llm.NewLlamaServer(gpus, model.ModelPath, ggml, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
 			// show a generalized compatibility error until there is a better way to
@@ -99,36 +268,51 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
 				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, model.ShortName)
 			}
-
-			return err
+			loadedMu.Lock()
+			defer loadedMu.Unlock()
+			delete(loaded, runner.model)
+			return nil, err
 		}
 
-		loaded.model = model.ModelPath
-		loaded.adapters = model.AdapterPaths
-		loaded.projectors = model.ProjectorPaths
-		loaded.llama = llama
-		loaded.Options = &opts
+		runner.model = model.ModelPath
+		runner.adapters = model.AdapterPaths
+		runner.projectors = model.ProjectorPaths
+		runner.llama = llama
+		runner.Options = &opts
+		runner.refCount = 0
+		runner.sessionDuration = sessionDuration
+		runner.gpus = gpus
 	}
 
-	if loaded.expireTimer == nil {
-		loaded.expireTimer = time.AfterFunc(sessionDuration, func() {
-			loaded.mu.Lock()
-			defer loaded.mu.Unlock()
-
-			if loaded.llama != nil {
-				loaded.llama.Close()
+	if runner.expireTimer == nil {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			runner.refMu.Lock()
+			defer runner.refMu.Unlock()
+			if runner.refCount > 0 {
+				// Typically this shouldn't happen with the timer reset, unless the timer
+				// is very short, or the system is very slow
+				slog.Debug("runner expireTimer fired while requests still in flight, waiting for completion")
+				runner.refCond.Wait()
 			}
 
-			loaded.llama = nil
-			loaded.model = ""
-			loaded.adapters = nil
-			loaded.projectors = nil
-			loaded.Options = nil
+			if runner.llama != nil {
+				runner.llama.Close()
+			}
+
+			runner.llama = nil
+			runner.adapters = nil
+			runner.projectors = nil
+			runner.Options = nil
+			runner.gpus = nil
+			loadedMu.Lock()
+			defer loadedMu.Unlock()
+			delete(loaded, runner.model)
+			slog.Debug("runner released", "model", runner.model)
 		})
 	}
 
-	loaded.expireTimer.Reset(sessionDuration)
-	return nil
+	runner.expireTimer.Reset(sessionDuration)
+	return runner, nil
 }
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
@@ -151,8 +335,6 @@ func isSupportedImageType(image []byte) bool {
 }
 
 func GenerateHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
 
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -220,10 +402,13 @@ func GenerateHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := load(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	runner.Use()
+	defer runner.Release()
 
 	// an empty request loads the model
 	// note: for a short while template was used in lieu
@@ -271,7 +456,7 @@ func GenerateHandler(c *gin.Context) {
 
 		sb.Reset()
 		if req.Context != nil {
-			prev, err := loaded.llama.Detokenize(c.Request.Context(), req.Context)
+			prev, err := runner.llama.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -294,7 +479,7 @@ func GenerateHandler(c *gin.Context) {
 
 		fn := func(r llm.CompletionResponse) {
 			// Update model expiration
-			loaded.expireTimer.Reset(sessionDuration)
+			runner.expireTimer.Reset(sessionDuration)
 
 			// Build up the full response
 			if _, err := generated.WriteString(r.Content); err != nil {
@@ -327,7 +512,7 @@ func GenerateHandler(c *gin.Context) {
 					}
 
 					// TODO (jmorganca): encode() should not strip special tokens
-					tokens, err := loaded.llama.Tokenize(c.Request.Context(), p)
+					tokens, err := runner.llama.Tokenize(c.Request.Context(), p)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
@@ -355,7 +540,7 @@ func GenerateHandler(c *gin.Context) {
 			Images:  images,
 			Options: opts,
 		}
-		if err := loaded.llama.Completion(c.Request.Context(), req, fn); err != nil {
+		if err := runner.llama.Completion(c.Request.Context(), req, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -418,9 +603,6 @@ func getDefaultSessionDuration() time.Duration {
 }
 
 func EmbeddingsHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
 	var req api.EmbeddingRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -465,10 +647,13 @@ func EmbeddingsHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := load(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	runner.Use()
+	defer runner.Release()
 
 	// an empty request loads the model
 	if req.Prompt == "" {
@@ -476,7 +661,7 @@ func EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := loaded.llama.Embedding(c.Request.Context(), req.Prompt)
+	embedding, err := runner.llama.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -1146,8 +1331,12 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		if loaded.llama != nil {
-			loaded.llama.Close()
+		loadedMu.Lock()
+		for model, runner := range loaded {
+			if runner.llama != nil {
+				slog.Debug("shutting down runner", "model", model)
+				runner.llama.Close()
+			}
 		}
 		gpu.Cleanup()
 		os.Exit(0)
@@ -1156,12 +1345,10 @@ func Serve(ln net.Listener) error {
 	if err := llm.Init(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
-	if runtime.GOOS == "linux" { // TODO - windows too
-		// check compatibility to log warnings
-		if _, err := gpu.CheckVRAM(); err != nil {
-			slog.Info(err.Error())
-		}
-	}
+
+	// At startup we retrieve GPU information so we can get log messages before loading a model
+	// This will log warnings to the log in case we have problems with detected GPUs
+	_ = gpu.GetGPUInfo()
 
 	return srvr.Serve(ln)
 }
@@ -1217,9 +1404,9 @@ func streamResponse(c *gin.Context, ch chan any) {
 }
 
 // ChatPrompt builds up a prompt from a series of messages for the currently `loaded` model
-func chatPrompt(ctx context.Context, template string, messages []api.Message, numCtx int) (string, error) {
+func chatPrompt(ctx context.Context, runner *runnerRef, template string, messages []api.Message, numCtx int) (string, error) {
 	encode := func(s string) ([]int, error) {
-		return loaded.llama.Tokenize(ctx, s)
+		return runner.llama.Tokenize(ctx, s)
 	}
 
 	prompt, err := ChatPrompt(template, messages, numCtx, encode)
@@ -1231,9 +1418,6 @@ func chatPrompt(ctx context.Context, template string, messages []api.Message, nu
 }
 
 func ChatHandler(c *gin.Context) {
-	loaded.mu.Lock()
-	defer loaded.mu.Unlock()
-
 	checkpointStart := time.Now()
 
 	var req api.ChatRequest
@@ -1290,10 +1474,13 @@ func ChatHandler(c *gin.Context) {
 		sessionDuration = req.KeepAlive.Duration
 	}
 
-	if err := load(c, model, opts, sessionDuration); err != nil {
+	runner, err := load(c, model, opts, sessionDuration)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	runner.Use()
+	defer runner.Release()
 
 	checkpointLoaded := time.Now()
 
@@ -1307,7 +1494,7 @@ func ChatHandler(c *gin.Context) {
 		}, req.Messages...)
 	}
 
-	prompt, err := chatPrompt(c.Request.Context(), model.Template, req.Messages, opts.NumCtx)
+	prompt, err := chatPrompt(c.Request.Context(), runner, model.Template, req.Messages, opts.NumCtx)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1351,7 +1538,7 @@ func ChatHandler(c *gin.Context) {
 
 		fn := func(r llm.CompletionResponse) {
 			// Update model expiration
-			loaded.expireTimer.Reset(sessionDuration)
+			runner.expireTimer.Reset(sessionDuration)
 
 			resp := api.ChatResponse{
 				Model:     req.Model,
@@ -1374,7 +1561,7 @@ func ChatHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		if err := loaded.llama.Completion(c.Request.Context(), llm.CompletionRequest{
+		if err := runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Format:  req.Format,
 			Images:  images,
