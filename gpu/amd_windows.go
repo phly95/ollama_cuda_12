@@ -109,7 +109,7 @@ func AMDGetGPUInfo() []GpuInfo {
 			}
 		}
 
-		totalMemory, freeMemory, err := hl.HipMemGetInfo()
+		freeMemory, totalMemory, err := hl.HipMemGetInfo()
 		if err != nil {
 			slog.Warn(fmt.Sprintf("[%d] %s", i, err))
 			continue
@@ -121,9 +121,10 @@ func AMDGetGPUInfo() []GpuInfo {
 			continue
 		}
 
-		// TODO according to docs, freeMem may lie on windows!
-		slog.Info(fmt.Sprintf("[%d] Total Mem: %d", i, totalMemory))
-		slog.Info(fmt.Sprintf("[%d] Free Mem:  %d", i, freeMemory))
+		// TODO revisit this once ROCm v6 is available on windows.
+		// v5.7 only reports VRAM used by this process, so it's completely wrong and unusable
+		slog.Info(fmt.Sprintf("[%d] Total Mem: %dM", i, totalMemory/1024/1024))
+		slog.Info(fmt.Sprintf("[%d] Free Mem:  %dM", i, freeMemory/1024/1024))
 		gpuInfo := GpuInfo{
 			Library: "rocm",
 			memInfo: memInfo{
