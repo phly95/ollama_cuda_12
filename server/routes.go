@@ -207,7 +207,8 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 						// Shouldn't happen
 						slog.Warn("XXX predicted usage exceeds VRAM", "ID", gpus[i].ID, "totalMemory", gpus[i].TotalMemory, "predicted", p)
 						gpus[i].FreeMemory = 0
-					} else {
+					} else if (gpus[i].TotalMemory - p) < gpus[i].FreeMemory { // predicted is smaller than reported, use that
+						// TODO maybe we should just always trust our numbers, since cuda's free memory reporting is laggy?
 						gpus[i].FreeMemory = gpus[i].TotalMemory - p
 					}
 					slog.Info(fmt.Sprintf("XXX [%s] updated %s totalMemory %dM", gpus[i].ID, gpus[i].Library, gpus[i].TotalMemory/1024/1024))
@@ -220,6 +221,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 				break
 			}
 			slog.Info("XXX new model will NOT fit in VRAM without unloading another model")
+			gpus = nil // force a refresh of the gpu info
 
 			// If we get to here, then we have GPUs, and can't fit the new model in VRAM
 			// Find the best candidate model to unload
@@ -252,6 +254,9 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			r.Options = nil
 			r.gpus = nil
 			delete(loaded, r.model)
+
+			// For CUDA, free memory reporting is laggy and will lead us astray
+			time.Sleep(100 * time.Millisecond) // TODO is this sufficient, or too long?
 		}
 		slog.Info("XXX setting up new model", "model", model.ModelPath)
 
