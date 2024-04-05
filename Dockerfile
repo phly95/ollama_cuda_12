@@ -12,8 +12,8 @@ COPY llm llm
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-amd64
 ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+COPY ./scripts/deps_linux.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /deps_linux.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
@@ -22,8 +22,8 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
 ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+COPY ./scripts/deps_linux.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /deps_linux.sh
 ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
@@ -32,8 +32,8 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
 ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
+COPY ./scripts/deps_linux.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /deps_linux.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 ENV LIBRARY_PATH /opt/amdgpu/lib64
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
@@ -53,8 +53,8 @@ RUN mkdir /tmp/scratch && \
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+COPY ./scripts/deps_linux.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /deps_linux.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
@@ -73,8 +73,8 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" sh gen_linux.sh
 FROM --platform=linux/arm64 centos:7 AS cpu-builder-arm64
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+COPY ./scripts/deps_linux.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /deps_linux.sh
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
