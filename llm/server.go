@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -36,6 +37,11 @@ type LlamaServer struct {
 
 	// TODO - this should be broken down by GPU
 	EstimatedVRAM uint64 // Estimated usage of VRAM by the loaded model
+
+	refMax   int // Maximum concurrent requests
+	refCount int
+	refMu    sync.Mutex
+	refCond  sync.Cond
 }
 
 var cpuOnlyFamilies = []string{
@@ -170,8 +176,12 @@ func NewLlamaServer(allGpus gpu.GpuInfoList, model string, ggml *GGML, adapters,
 			params = append(params, "--numa")
 		}
 
-		// TODO configurable?
-		params = append(params, "--parallel", "4")
+		// "--cont-batching", // TODO - doesn't seem to have any noticeable perf change for multiple requests
+		numParallel := 4
+		if opts.NumParallel > 0 {
+			numParallel = opts.NumParallel
+		}
+		params = append(params, "--parallel", fmt.Sprintf("%d", numParallel))
 
 		// TODO - this loop needs to move up/out
 
@@ -225,7 +235,10 @@ func NewLlamaServer(allGpus gpu.GpuInfoList, model string, ggml *GGML, adapters,
 				status:        NewStatusWriter(os.Stderr),
 				options:       opts,
 				EstimatedVRAM: estimatedVRAM,
+				refMax:        numParallel,
 			}
+			s.refCond.L = &s.refMu
+
 			libEnv := fmt.Sprintf("%s=%s", pathEnv, strings.Join(libraryPaths, string(filepath.ListSeparator)))
 			s.cmd.Env = append(os.Environ(), libEnv)
 			s.cmd.Stdout = os.Stdout
@@ -305,6 +318,21 @@ const ( // iota is reset to 0
 	ServerStatusNotResponding
 	ServerStatusError
 )
+
+func (s ServerStatus) ToString() string {
+	switch s {
+	case ServerStatusReady:
+		return "llm server ready"
+	case ServerStatusNoSlotsAvaialble:
+		return "llm busy - no slots available"
+	case ServerStatusLoadingModel:
+		return "llm server loading model"
+	case ServerStatusNotResponding:
+		return "llm server not responding"
+	default:
+		return "llm server error"
+	}
+}
 
 type ServerStatusResp struct {
 	Status          string `json:"status"`
@@ -424,6 +452,24 @@ func (s *LlamaServer) waitUntilRunning() error {
 	}
 }
 
+func (s *LlamaServer) incRef() {
+	s.refMu.Lock()
+	defer s.refMu.Unlock()
+	for s.refCount >= s.refMax {
+		slog.Debug("XXX maximum parallel requests reached, waiting for one to finish")
+		s.refCond.Wait()
+	}
+	s.refCount++
+	slog.Info("XXX got ref lock", "refCount", s.refCount)
+}
+func (s *LlamaServer) decRef() {
+	s.refMu.Lock()
+	defer s.refMu.Unlock()
+	s.refCount--
+	s.refCond.Signal()
+	slog.Info("XXX released ref lock", "refCount", s.refCount)
+}
+
 const jsonGrammar = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
@@ -491,6 +537,8 @@ type CompletionResponse struct {
 }
 
 func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
+	s.incRef()
+	defer s.decRef()
 	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
@@ -521,7 +569,7 @@ func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn 
 	if err != nil {
 		return err
 	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %d", status)
+		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
 	if req.Format == "json" {
@@ -669,12 +717,14 @@ type EmbeddingResponse struct {
 }
 
 func (s *LlamaServer) Embedding(ctx context.Context, prompt string) ([]float64, error) {
+	s.incRef()
+	defer s.decRef()
 	// Make sure the server is ready
 	status, err := s.getServerStatus(ctx)
 	if err != nil {
 		return nil, err
 	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %d", status)
+		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
 	data, err := json.Marshal(TokenizeRequest{Content: prompt})
@@ -725,8 +775,8 @@ func (s *LlamaServer) Tokenize(ctx context.Context, content string) ([]int, erro
 	status, err := s.getServerStatus(ctx)
 	if err != nil {
 		return nil, err
-	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %d", status)
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
+		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
 	data, err := json.Marshal(TokenizeRequest{Content: content})
@@ -777,8 +827,8 @@ func (s *LlamaServer) Detokenize(ctx context.Context, tokens []int) (string, err
 	status, err := s.getServerStatus(ctx)
 	if err != nil {
 		return "", err
-	} else if status != ServerStatusReady {
-		return "", fmt.Errorf("unexpected server status: %d", status)
+	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvaialble {
+		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
 	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
