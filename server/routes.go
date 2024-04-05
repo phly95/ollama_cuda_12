@@ -102,8 +102,10 @@ var loadMu sync.Mutex
 
 // load a model into memory if it is not already loaded
 func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) (*runnerRef, error) {
+	slog.Info("XXX load called", "model", model.ModelPath)
 	loadMu.Lock()
 	defer loadMu.Unlock()
+	slog.Info("XXX load got lock", "model", model.ModelPath)
 
 	loadedMu.Lock()
 	runner := loaded[model.ModelPath]
@@ -113,6 +115,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 	var ggml *llm.GGML
 
 	if runner != nil {
+		slog.Info("XXX load with existing model", "model", model.ModelPath)
 		runner.refMu.Lock()
 		defer runner.refMu.Unlock()
 		// Ignore the NumGPU settings
@@ -140,6 +143,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		}
 	}
 	if runner == nil {
+		slog.Info("XXX load with nil runner", "model", model.ModelPath)
 		var err error
 		ggml, err = llm.LoadModel(model.ModelPath)
 		if err != nil {
@@ -196,6 +200,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 				if p, ok := predMap[predKey{gpus[i].Library, gpus[i].ID}]; ok {
 
 					// TODO - remove this once things are stable, until then, compare our numbers vs. what the GPU reports
+					slog.Info(fmt.Sprintf("XXX [%s] before update %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
 					slog.Debug(fmt.Sprintf("[%s] before update %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
 
 					if p > gpus[i].TotalMemory {
@@ -205,15 +210,16 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 					} else {
 						gpus[i].FreeMemory = gpus[i].TotalMemory - p
 					}
-					slog.Info(fmt.Sprintf("[%s] updated %s totalMemory %dM", gpus[i].ID, gpus[i].Library, gpus[i].TotalMemory/1024/1024))
-					slog.Info(fmt.Sprintf("[%s] updated %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
+					slog.Info(fmt.Sprintf("XXX [%s] updated %s totalMemory %dM", gpus[i].ID, gpus[i].Library, gpus[i].TotalMemory/1024/1024))
+					slog.Info(fmt.Sprintf("XXX [%s] updated %s freeMemory  %dM", gpus[i].ID, gpus[i].Library, gpus[i].FreeMemory/1024/1024))
 				}
 			}
 
 			if fits, _ := llm.PredictServerFit(gpus, ggml, model.AdapterPaths, model.ProjectorPaths, opts); fits {
-				slog.Debug("new model will fit in VRAM, loading")
+				slog.Info("XXX new model will fit in VRAM, loading")
 				break
 			}
+			slog.Info("XXX new model will NOT fit in VRAM without unloading another model")
 
 			// If we get to here, then we have GPUs, and can't fit the new model in VRAM
 			// Find the best candidate model to unload
@@ -235,7 +241,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 				// TODO - prevent new requests from coming in
 				r.refCond.Wait()
 			}
-			slog.Info("insufficient VRAM to fit new model, unloading one", "old_model", r.model, "new_model", model.ModelPath)
+			slog.Info("XXX insufficient VRAM to fit new model, unloading one", "old_model", r.model, "new_model", model.ModelPath)
 			if r.expireTimer != nil {
 				r.expireTimer.Stop()
 			}
@@ -247,6 +253,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			r.gpus = nil
 			delete(loaded, r.model)
 		}
+		slog.Info("XXX setting up new model", "model", model.ModelPath)
 
 		runner = &runnerRef{}
 		runner.refCond.L = &runner.refMu
@@ -257,8 +264,10 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		loadedMu.Unlock()
 
 		if len(gpus) == 0 {
+			slog.Info("XXX fresh GetGPUInfo", "model", model.ModelPath)
 			gpus = gpu.GetGPUInfo()
 		}
+		slog.Info("XXX calling NewLlamaServer", "model", model.ModelPath)
 
 		llama, err := llm.NewLlamaServer(gpus, model.ModelPath, ggml, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
@@ -271,6 +280,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			loadedMu.Lock()
 			defer loadedMu.Unlock()
 			delete(loaded, runner.model)
+			slog.Info("XXX NewLlamServer failed", "model", model.ModelPath)
 			return nil, err
 		}
 
@@ -282,10 +292,12 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 		runner.refCount = 0
 		runner.sessionDuration = sessionDuration
 		runner.gpus = gpus
+		slog.Info("XXX finished setting up runner", "model", model.ModelPath)
 	}
 
 	if runner.expireTimer == nil {
 		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			slog.Info("XXX timer fired to unload", "model", model.ModelPath)
 			runner.refMu.Lock()
 			defer runner.refMu.Unlock()
 			if runner.refCount > 0 {
@@ -294,6 +306,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 				slog.Debug("runner expireTimer fired while requests still in flight, waiting for completion")
 				runner.refCond.Wait()
 			}
+			slog.Info("XXX got lock to unload", "model", model.ModelPath)
 
 			if runner.llama != nil {
 				runner.llama.Close()
@@ -308,6 +321,7 @@ func load(c *gin.Context, model *Model, opts api.Options, sessionDuration time.D
 			defer loadedMu.Unlock()
 			delete(loaded, runner.model)
 			slog.Debug("runner released", "model", runner.model)
+			slog.Info("XXX finished unloading", "model", model.ModelPath)
 		})
 	}
 
