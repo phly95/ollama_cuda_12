@@ -8,7 +8,9 @@ ARG ROCM_VERSION=6.0.2
 FROM scratch AS llm-code
 COPY .git .git
 COPY .gitmodules .gitmodules
-COPY llm llm
+COPY llm/ext_server llm/ext_server
+COPY llm/generate llm/generate
+COPY llm/patches llm/patches
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION-devel-centos7 AS cuda-build-amd64
 ARG CMAKE_VERSION
