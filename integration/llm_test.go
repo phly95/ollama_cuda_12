@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +44,7 @@ var (
 func TestIntegrationSimpleOrcaMini(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
-	GenerateTestHelper(ctx, t, &http.Client{}, req[0], resp[0])
+	GenerateTestHelper(ctx, t, req[0], resp[0])
 }
 
 // TODO
@@ -60,7 +59,7 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			GenerateTestHelper(ctx, t, &http.Client{}, req[i], resp[i])
+			GenerateTestHelper(ctx, t, req[i], resp[i])
 		}(i)
 	}
 	wg.Wait()
