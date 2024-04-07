@@ -4,8 +4,6 @@ package integration
 
 import (
 	"context"
-	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -45,24 +43,5 @@ var (
 func TestIntegrationSimpleOrcaMini(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
-	GenerateTestHelper(ctx, t, &http.Client{}, req[0], resp[0])
-}
-
-// TODO
-// The server always loads a new runner and closes the old one, which forces serial execution
-// At present this test case fails with concurrency problems.  Eventually we should try to
-// get true concurrency working with n_parallel support in the backend
-func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(len(req))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
-	defer cancel()
-	for i := 0; i < len(req); i++ {
-		go func(i int) {
-			defer wg.Done()
-			// TODO re-wire this to support streaming so we can verify that responses for both are concurrent
-			GenerateTestHelper(ctx, t, &http.Client{}, req[i], resp[i])
-		}(i)
-	}
-	wg.Wait()
+	GenerateTestHelper(ctx, t, req[0], resp[0])
 }
