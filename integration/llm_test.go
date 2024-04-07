@@ -4,7 +4,6 @@ package integration
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -45,22 +44,4 @@ func TestIntegrationSimpleOrcaMini(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
 	defer cancel()
 	GenerateTestHelper(ctx, t, req[0], resp[0])
-}
-
-// TODO
-// The server always loads a new runner and closes the old one, which forces serial execution
-// At present this test case fails with concurrency problems.  Eventually we should try to
-// get true concurrency working with n_parallel support in the backend
-func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(len(req))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*120)
-	defer cancel()
-	for i := 0; i < len(req); i++ {
-		go func(i int) {
-			defer wg.Done()
-			GenerateTestHelper(ctx, t, req[i], resp[i])
-		}(i)
-	}
-	wg.Wait()
 }

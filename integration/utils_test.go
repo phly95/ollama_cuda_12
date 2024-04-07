@@ -24,8 +24,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func Init() {
+	lifecycle.InitLogging()
+}
 
 func FindPort() string {
 	port := 0
@@ -81,7 +85,7 @@ func GetTestEndpoint() (*api.Client, string) {
 var serverMutex sync.Mutex
 var serverReady bool
 
-func StartServer(ctx context.Context, ollamaHost string) error {
+func startServer(ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
 	CLIName, err := filepath.Abs("../ollama")
 	if err != nil {
@@ -153,7 +157,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 5 * time.Second
+	stallDuration := 30 * time.Second // This includes checksum verification, which can take a while on larger models
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
@@ -184,12 +188,22 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 var serverProcMutex sync.Mutex
 
-func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
+// Returns an Client, the testEndpoint, and a cleanup function, fails the test on errors
+// Starts the server if needed
+func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, string, func()) {
+	client, testEndpoint := GetTestEndpoint()
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		serverProcMutex.Lock()
+		fp, err := os.CreateTemp("", "ollama-server-*.log")
+		if err != nil {
+			t.Fatalf("failed to generate log file: %s", err)
+		}
+		lifecycle.ServerLogFile = fp.Name()
+		fp.Close()
+		require.NoError(t, startServer(ctx, testEndpoint))
+	}
 
-	// TODO maybe stuff in an init routine?
-	lifecycle.InitLogging()
-
-	defer func() {
+	return client, testEndpoint, func() {
 		if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
 			defer serverProcMutex.Unlock()
 			if t.Failed() {
@@ -212,28 +226,23 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 				slog.Warn("failed to cleanup", "logfile", lifecycle.ServerLogFile, "error", err)
 			}
 		}
-	}()
-	client, testEndpoint := GetTestEndpoint()
-
-	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
-		serverProcMutex.Lock()
-		fp, err := os.CreateTemp("", "ollama-server-*.log")
-		if err != nil {
-			t.Fatalf("failed to generate log file: %s", err)
-		}
-		lifecycle.ServerLogFile = fp.Name()
-		fp.Close()
-		assert.NoError(t, StartServer(ctx, testEndpoint))
 	}
+}
 
-	assert.NoError(t, PullIfMissing(ctx, client, genReq.Model))
+func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRequest, anyResp []string) {
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, genReq.Model))
+	DoGenerate(ctx, t, client, genReq, anyResp, 30*time.Second, 10*time.Second)
+}
 
-	stallTimer := time.NewTimer(30 * time.Second) // Initial model load can take some time...
+func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) {
+	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
-		if !stallTimer.Reset(10 * time.Second) {
+		if !stallTimer.Reset(streamTimeout) {
 			return fmt.Errorf("stall was detected while streaming response, aborting")
 		}
 		return nil
@@ -250,9 +259,13 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 
 	select {
 	case <-stallTimer.C:
-		t.Errorf("generate stalled.  Response so far:%s", buf.String())
+		if buf.Len() == 0 {
+			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
+		} else {
+			t.Errorf("generate stalled.  Response so far:%s", buf.String())
+		}
 	case <-done:
-		assert.NoError(t, genErr)
+		require.NoError(t, genErr, "failed with request prompt %s", genReq.Prompt)
 		// Verify the response contains the expected data
 		response := buf.String()
 		atLeastOne := false
@@ -262,9 +275,64 @@ func GenerateTestHelper(ctx context.Context, t *testing.T, genReq api.GenerateRe
 				break
 			}
 		}
-		assert.True(t, atLeastOne, "none of %v found in %s", anyResp, response)
-		slog.Info("test pass", "prompt", genReq.Prompt, "contains", anyResp, "response", response)
+		require.True(t, atLeastOne, "none of %v found in %s", anyResp, response)
+		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
 	}
+}
+
+// Generate a set of requests
+// By default each request uses orca-mini as the model
+func GenerateRequests() ([]api.GenerateRequest, [][]string) {
+	return []api.GenerateRequest{
+			{
+				Model:  "orca-mini",
+				Prompt: "why is the ocean blue?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "why is the color of dirt brown?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the origin of the us thanksgiving holiday?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the origin of independence day?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}, {
+				Model:  "orca-mini",
+				Prompt: "what is the composition of air?",
+				Stream: &stream,
+				Options: map[string]interface{}{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			},
+		},
+		[][]string{
+			[]string{"sunlight"},
+			[]string{"soil", "organic", "earth", "black", "tan"},
+			[]string{"england", "english", "massachusetts", "pilgrims"},
+			[]string{"fourth", "july", "declaration", "independence"},
+			[]string{"nitrogen", "oxygen", "carbon", "dioxide"},
+		}
 }
