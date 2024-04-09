@@ -10,7 +10,9 @@ import (
 )
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
-func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, error) {
+func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64, error) {
+	var estimatedVRAM uint64
+	var layers int
 	if opts.NumCtx > int(ggml.KV().ContextLength()) {
 		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
 		opts.NumCtx = int(ggml.KV().ContextLength())
@@ -22,12 +24,12 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 
 	// Split up the GPUs by type and try them
 	for _, gpus := range allGpus.ByLibrary() {
-		layers, _ := PredictGPULayers(gpus, ggml, projectors, opts)
-		if layers >= int(ggml.KV().BlockCount()) {
-			return true, nil
+		layers, estimatedVRAM = PredictGPULayers(gpus, ggml, projectors, opts)
+		if layers >= int(ggml.KV().BlockCount()) { // TODO handle user specified lower layer count
+			return true, estimatedVRAM, nil
 		}
 	}
-	return false, nil
+	return false, estimatedVRAM, nil
 }
 
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load
