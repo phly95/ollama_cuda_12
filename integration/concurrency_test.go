@@ -126,10 +126,6 @@ func TestMultiModelStress(t *testing.T) {
 			size: 4620 * MB,
 		},
 		{
-			name: "codellama:7b",
-			size: 5118 * MB,
-		},
-		{
 			name: "orca-mini:7b",
 			size: 5118 * MB,
 		},
@@ -137,6 +133,15 @@ func TestMultiModelStress(t *testing.T) {
 			name: "dolphin-mistral",
 			size: 4620 * MB,
 		},
+		{
+			name: "gemma:7b",
+			size: 5000 * MB,
+		},
+		// TODO - uncomment this once #3565 is merged and this is rebased on it
+		// {
+		// 	name: "codellama:7b",
+		// 	size: 5118 * MB,
+		// },
 	}
 
 	// These seem to be too slow to be useful...

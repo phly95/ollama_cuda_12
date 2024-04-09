@@ -265,7 +265,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 			t.Errorf("generate stalled.  Response so far:%s", buf.String())
 		}
 	case <-done:
-		require.NoError(t, genErr, "failed with request prompt %s", genReq.Prompt)
+		require.NoError(t, genErr, "failed with %s request prompt %s ", genReq.Model, genReq.Prompt)
 		// Verify the response contains the expected data
 		response := buf.String()
 		atLeastOne := false
