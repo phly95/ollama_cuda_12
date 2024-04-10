@@ -19,9 +19,10 @@ import (
 )
 
 type runnerRef struct {
-	refMu    sync.Mutex
-	refCond  sync.Cond
-	refCount uint
+	refMu     sync.Mutex
+	refCond   sync.Cond // Signaled on transition from 1 -> 0 refCount
+	refCount  uint      // prevent unloading if > 0
+	unloading bool      // set to true when we are trying to unload the runner
 
 	llama         *llm.LlamaServer
 	gpus          gpu.GpuInfoList // Recorded at time of provisioning
@@ -39,13 +40,22 @@ type runnerRef struct {
 func (runner *runnerRef) Use() error {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
-	// Note: LlamaServer implements limits and blocks requests until there's an available slot
-	runner.refCount++
 
 	// Safeguard in case runner has been unloaded while we waited for the refMu lock
 	if runner.llama == nil {
+		slog.Info("request rejected after model was unloading")
 		return fmt.Errorf("model was unloaded to make room for another model")
 	}
+
+	if runner.unloading {
+		slog.Info("request rejected while model is unloading")
+		return fmt.Errorf("model is being unloaded")
+	}
+
+	// Note: LlamaServer implements limits and blocks requests until there's an available slot
+	// so we can allow many requests to be in flight concurrently at this layer
+	runner.refCount++
+
 	return nil
 }
 
@@ -70,20 +80,28 @@ func (a ByDuration) Less(i, j int) bool {
 	return uint64(a[i].sessionDuration) < uint64(a[j].sessionDuration)
 }
 
-type BySize []*runnerRef
-
-func (a BySize) Len() int           { return len(a) }
-func (a BySize) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a BySize) Less(i, j int) bool { return a[i].estimatedVRAM < a[j].estimatedVRAM }
+// TODO - future consideration to pick runners based on size
+// type BySize []*runnerRef
+// func (a BySize) Len() int           { return len(a) }
+// func (a BySize) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+// func (a BySize) Less(i, j int) bool { return a[i].estimatedVRAM < a[j].estimatedVRAM }
 
 // Only allow the getRunner func to run one at a time
-var loadMu sync.Mutex
+var getRunnerMu sync.Mutex
 
-// load a model into memory if it is not already loaded
+// getRunner idempotently loads a runner for the given model and options.
+// If the same model is loaded with other options, the runner will be unloaded (once idle)
+// and replaced with a new runner and the new options.
+// If one or more other models are loaded, this routine will determine if the new runner
+// can be loaded and fit fully in VRAM.  If it can not, other runners will be unloaded
+// until there is enough room, or this new model becomes the only runner.
 func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration time.Duration) (*runnerRef, error) {
+
+	// TODO debug logging is a bit verbose, but should help us troubleshoot any glitches
+	// Once things are looking solid, quiet down the logs
 	slog.Debug("getRunner called", "model", model.ModelPath)
-	loadMu.Lock()
-	defer loadMu.Unlock()
+	getRunnerMu.Lock()
+	defer getRunnerMu.Unlock()
 	slog.Debug("getRunner processing", "model", model.ModelPath)
 
 	loadedMu.Lock()
@@ -97,7 +115,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 		slog.Debug("evaluating already loaded", "model", model.ModelPath)
 		runner.refMu.Lock()
 		defer runner.refMu.Unlock()
-		// Ignore the NumGPU settings
+		// Ignore the NumGPU settings for comparison
 		optsExisting := runner.Options.Runner
 		optsExisting.NumGPU = -1
 		optsNew := opts.Runner
@@ -110,6 +128,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 			runner.llama.Ping(ctx) != nil {
 			if runner.refCount > 0 {
 				slog.Debug("runner reload required, but active requests in flight...")
+				runner.unloading = true
 				runner.refCond.Wait()
 			}
 			slog.Info("changing loaded model to update settings", "model", model.ModelPath)
@@ -136,7 +155,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 			slog.Debug("attempting to fit new model with existing models running", "runner_count", len(loaded))
 
 			gpus = gpu.GetGPUInfo()
-			if ggml.IsCPUOnlyModel() || (len(gpus) == 1 && gpus[0].Library == "cpu") {
+			if ggml.IsCPUOnlyModel() || (len(gpus) == 1 && gpus[0].Library == "cpu") || opts.NumGPU == 0 {
 
 				// TODO evaluate system memory to see if we should block the load, or force an unload of another CPU runner
 
@@ -199,6 +218,9 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 			}
 
 			fits := false
+
+			// TODO - this is incorrect for mixed Library GPUs - needs to either loop over Libraries or handle it somehow
+
 			if fits, estimatedVRAM, _ = llm.PredictServerFit(gpus, ggml, model.AdapterPaths, model.ProjectorPaths, opts); fits {
 				slog.Debug("new model will fit in available VRAM, loading", "model", model.ModelPath)
 				break
@@ -228,6 +250,9 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 			slog.Debug("refreshing GPU info", "model", model.ModelPath)
 			gpus = gpu.GetGPUInfo()
 		}
+
+		// TODO - this should probably narrow to just one Library so the NewLlamaServer can be simplified to assume 1 Library, or CPU fallback
+
 		llama, err := llm.NewLlamaServer(gpus, model.ModelPath, ggml, model.AdapterPaths, model.ProjectorPaths, opts)
 		if err != nil {
 			// some older models are not compatible with newer versions of llama.cpp
@@ -264,6 +289,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 				// Typically this shouldn't happen with the timer reset, unless the timer
 				// is very short, or the system is very slow
 				slog.Debug("runner expireTimer fired while requests still in flight, waiting for completion")
+				runner.unloading = true
 				runner.refCond.Wait()
 			}
 			slog.Debug("got lock to unload", "model", model.ModelPath)
@@ -288,7 +314,9 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 	return runner, nil
 }
 
+// unloadBestFitRunner finds a runner to unload to make room for a new model
 // Caller must already have loadedMu lock
+// This will block until all pending requests to the given runner have drained
 func unloadBestFitRunner() {
 	runnerList := make([]*runnerRef, 0, len(loaded))
 	for _, r := range loaded {
@@ -316,7 +344,7 @@ func unloadBestFitRunner() {
 		defer r.refMu.Unlock()
 		if r.refCount > 0 {
 			slog.Info("waiting for pending requests to drain before unloading", "old_model", r.model)
-			// TODO - prevent new requests from coming in
+			r.unloading = true
 			r.refCond.Wait()
 		}
 	}
@@ -334,4 +362,15 @@ func unloadBestFitRunner() {
 	r.Options = nil
 	r.gpus = nil
 	delete(loaded, r.model)
+}
+
+func unloadAllRunners() {
+	loadedMu.Lock()
+	defer loadedMu.Unlock()
+	for model, runner := range loaded {
+		if runner.llama != nil {
+			slog.Debug("shutting down runner", "model", model)
+			runner.llama.Close()
+		}
+	}
 }

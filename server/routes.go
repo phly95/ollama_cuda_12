@@ -1076,13 +1076,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		loadedMu.Lock()
-		for model, runner := range loaded {
-			if runner.llama != nil {
-				slog.Debug("shutting down runner", "model", model)
-				runner.llama.Close()
-			}
-		}
+		unloadAllRunners()
 		gpu.Cleanup()
 		os.Exit(0)
 	}()

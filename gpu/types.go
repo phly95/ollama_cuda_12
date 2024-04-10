@@ -1,7 +1,6 @@
 package gpu
 
 import (
-	"log/slog"
 	"sort"
 )
 
@@ -71,6 +70,5 @@ func (l GpuInfoList) PickBestGPU() GpuInfo {
 	tmp := make(GpuInfoList, 0, len(l))
 	tmp = append(tmp, l...)
 	sort.Sort(sort.Reverse(ByFreeMemory(tmp)))
-	slog.Debug("XXX GPU list: ", "gpuinfo", tmp)
 	return tmp[0]
 }
