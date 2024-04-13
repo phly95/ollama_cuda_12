@@ -24,7 +24,7 @@ import (
 )
 
 type handles struct {
-	num_devices int
+	deviceCount int
 	cudart      *C.cudart_handle_t
 }
 
@@ -41,7 +41,7 @@ var CudaComputeMin = [2]C.int{5, 0}
 var RocmComputeMin = 9
 
 // TODO find a better way to detect iGPU instead of minimum memory
-const IGPUMemLimit = 1024 * 1024 * 1024 // 512G is what they typically report, so anything less than 1G must be iGPU
+const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
 
 var CudartLinuxGlobs = []string{
 	"/usr/local/cuda/lib64/libcudart.so*",
@@ -96,11 +96,11 @@ func initGPUHandles() *handles {
 	slog.Info("Detecting GPUs")
 	cudartLibPaths := FindGPULibs(cudartMgmtName, cudartMgmtPatterns)
 	if len(cudartLibPaths) > 0 {
-		num_devices, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
+		deviceCount, cudart, libPath := LoadCUDARTMgmt(cudartLibPaths)
 		if cudart != nil {
-			slog.Info(fmt.Sprintf("%s reports %d GPUs present", libPath, num_devices))
+			slog.Info("detected GPUs", "library", libPath, "count", deviceCount)
 			gpuHandles.cudart = cudart
-			gpuHandles.num_devices = num_devices
+			gpuHandles.deviceCount = deviceCount
 			return gpuHandles
 		}
 	}
@@ -130,7 +130,7 @@ func GetGPUInfo() GpuInfoList {
 	resp := []GpuInfo{}
 
 	// NVIDIA first
-	for i := 0; i < gpuHandles.num_devices; i++ {
+	for i := 0; i < gpuHandles.deviceCount; i++ {
 		// TODO once we support CPU compilation variants of GPU libraries refine this...
 		if cpuVariant == "" && runtime.GOARCH == "amd64" {
 			continue
@@ -140,7 +140,7 @@ func GetGPUInfo() GpuInfoList {
 		}
 		C.cudart_check_vram(*gpuHandles.cudart, C.int(i), &memInfo)
 		if memInfo.err != nil {
-			slog.Info(fmt.Sprintf("error looking up nvidia GPU memory: %s", C.GoString(memInfo.err)))
+			slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 			continue
 		}
@@ -165,7 +165,7 @@ func GetGPUInfo() GpuInfoList {
 	if len(resp) == 0 {
 		C.cpu_check_ram(&memInfo)
 		if memInfo.err != nil {
-			slog.Info(fmt.Sprintf("error looking up CPU memory: %s", C.GoString(memInfo.err)))
+			slog.Info("error looking up CPU memory", "error", C.GoString(memInfo.err))
 			C.free(unsafe.Pointer(memInfo.err))
 			return resp
 		}
@@ -200,7 +200,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
 	var ldPaths []string
 	gpuLibPaths := []string{}
-	slog.Debug(fmt.Sprintf("Searching for GPU management library %s", baseLibName))
+	slog.Debug("Searching for GPU library", "name", baseLibName)
 
 	switch runtime.GOOS {
 	case "windows":
@@ -218,7 +218,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 		}
 		patterns = append(patterns, filepath.Join(d, baseLibName+"*"))
 	}
-	slog.Debug(fmt.Sprintf("gpu library search paths: %v", patterns))
+	slog.Debug("gpu library search", "globs", patterns)
 	for _, pattern := range patterns {
 		// Ignore glob discovery errors
 		matches, _ := filepath.Glob(pattern)
@@ -246,7 +246,7 @@ func FindGPULibs(baseLibName string, patterns []string) []string {
 			}
 		}
 	}
-	slog.Debug(fmt.Sprintf("discovered GPU libraries: %v", gpuLibPaths))
+	slog.Debug("discovered GPU libraries", "paths", gpuLibPaths)
 	return gpuLibPaths
 }
 

@@ -70,6 +70,18 @@ func (runner *runnerRef) Release() {
 	}
 }
 
+// The refMu must already be held when calling unload
+func (runner *runnerRef) unload() {
+	if runner.llama != nil {
+		runner.llama.Close()
+	}
+	runner.llama = nil
+	runner.adapters = nil
+	runner.projectors = nil
+	runner.Options = nil
+	runner.gpus = nil
+}
+
 var loadedMu sync.Mutex
 var loaded = map[string]*runnerRef{}
 
@@ -146,11 +158,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 				runner.refCond.Wait()
 			}
 			slog.Info("changing loaded model to update settings", "model", model.ModelPath)
-			runner.llama.Close()
-			runner.llama = nil
-			runner.adapters = nil
-			runner.projectors = nil
-			runner.Options = nil
+			runner.unload()
 			runner = nil
 		}
 	}
@@ -304,6 +312,11 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 		runner.sessionDuration = sessionDuration
 		runner.gpus = gpus
 		runner.estimatedVRAM = llama.EstimatedVRAM
+		if err = llama.WaitUntilRunning(); err != nil {
+			slog.Error("error loading llama server", "error", err)
+			runner.unload()
+			return nil, err
+		}
 		slog.Debug("finished setting up runner", "model", model.ModelPath)
 	}
 
@@ -321,15 +334,7 @@ func getRunner(c *gin.Context, model *Model, opts api.Options, sessionDuration t
 			}
 			slog.Debug("got lock to unload", "model", model.ModelPath)
 
-			if runner.llama != nil {
-				runner.llama.Close()
-			}
-
-			runner.llama = nil
-			runner.adapters = nil
-			runner.projectors = nil
-			runner.Options = nil
-			runner.gpus = nil
+			runner.unload()
 			loadedMu.Lock()
 			defer loadedMu.Unlock()
 			delete(loaded, runner.model)
@@ -372,7 +377,9 @@ func unloadBestFitRunner() {
 		if r.refCount > 0 {
 			slog.Info("waiting for pending requests to drain before unloading", "old_model", r.model)
 			r.unloading = true
+			loadedMu.Unlock() // Release the loadedMu lock while we're waiting
 			r.refCond.Wait()
+			loadedMu.Lock()
 		}
 	}
 
@@ -382,14 +389,7 @@ func unloadBestFitRunner() {
 		r.expireTimer.Stop()
 	}
 
-	if r.llama != nil {
-		r.llama.Close()
-	}
-	r.llama = nil
-	r.adapters = nil
-	r.projectors = nil
-	r.Options = nil
-	r.gpus = nil
+	r.unload()
 	delete(loaded, r.model)
 }
 

@@ -19,8 +19,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
@@ -38,10 +39,7 @@ type LlamaServer struct {
 	// TODO - this should be broken down by GPU
 	EstimatedVRAM uint64 // Estimated usage of VRAM by the loaded model
 
-	refMax   int // Maximum concurrent requests
-	refCount int
-	refMu    sync.Mutex
-	refCond  sync.Cond
+	sem *semaphore.Weighted
 }
 
 func LoadModel(model string) (*GGML, error) {
@@ -81,7 +79,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		cpuRunner = serverForCpu()
 	} else {
 		var layers int
-		layers, estimatedVRAM = PredictGPULayers(gpus, ggml, projectors, opts)
+		layers, estimatedVRAM, _ = PredictGPULayers(gpus, ggml, projectors, opts)
 
 		if opts.NumGPU < 0 && layers > 0 && gpus[0].Library != "cpu" {
 			opts.NumGPU = layers
@@ -233,9 +231,8 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			status:        NewStatusWriter(os.Stderr),
 			options:       opts,
 			EstimatedVRAM: estimatedVRAM,
-			refMax:        numParallel,
+			sem:           semaphore.NewWeighted(int64(numParallel)),
 		}
-		s.refCond.L = &s.refMu
 
 		libEnv := fmt.Sprintf("%s=%s", pathEnv, strings.Join(libraryPaths, string(filepath.ListSeparator)))
 		s.cmd.Env = append(os.Environ(), libEnv)
@@ -268,6 +265,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			_ = s.cmd.Wait()
 		}()
 
+		if err = s.WaitUntilRunning(); err != nil {
+			slog.Error("error starting llama server", "server", servers[i], "error", err)
+			s.Close()
+			finalErr = err
+			continue
+		}
 		return s, nil
 	}
 
@@ -439,24 +442,6 @@ func (s *LlamaServer) WaitUntilRunning() error {
 	}
 }
 
-func (s *LlamaServer) incRef() {
-	s.refMu.Lock()
-	defer s.refMu.Unlock()
-	for s.refCount >= s.refMax {
-		slog.Debug("maximum parallel requests reached, waiting for one to finish")
-		s.refCond.Wait()
-	}
-	s.refCount++
-	slog.Debug("got ref lock", "refCount", s.refCount)
-}
-func (s *LlamaServer) decRef() {
-	s.refMu.Lock()
-	defer s.refMu.Unlock()
-	s.refCount--
-	s.refCond.Signal()
-	slog.Debug("released ref lock", "refCount", s.refCount)
-}
-
 const jsonGrammar = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
@@ -524,8 +509,11 @@ type CompletionResponse struct {
 }
 
 func (s *LlamaServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
-	s.incRef()
-	defer s.decRef()
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return err
+	}
+	defer s.sem.Release(1)
 	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
@@ -704,8 +692,11 @@ type EmbeddingResponse struct {
 }
 
 func (s *LlamaServer) Embedding(ctx context.Context, prompt string) ([]float64, error) {
-	s.incRef()
-	defer s.decRef()
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return nil, err
+	}
+	defer s.sem.Release(1)
 	// Make sure the server is ready
 	status, err := s.getServerStatus(ctx)
 	if err != nil {

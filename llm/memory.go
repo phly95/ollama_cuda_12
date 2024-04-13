@@ -12,7 +12,6 @@ import (
 // This algorithm looks for a complete fit to determine if we need to unload other models
 func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64, error) {
 	var estimatedVRAM uint64
-	var layers int
 	if opts.NumCtx > int(ggml.KV().ContextLength()) {
 		slog.Warn("requested context length is greater than model max context length", "requested", opts.NumCtx, "model", ggml.KV().ContextLength())
 		opts.NumCtx = int(ggml.KV().ContextLength())
@@ -24,19 +23,21 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 
 	// Split up the GPUs by type and try them
 	for _, gpus := range allGpus.ByLibrary() {
-		layers, estimatedVRAM = PredictGPULayers(gpus, ggml, projectors, opts)
-		if layers >= int(ggml.KV().BlockCount()+1) || (opts.NumGPU > 0 && layers >= opts.NumGPU) {
+		var allLayers bool
+		_, estimatedVRAM, allLayers = PredictGPULayers(gpus, ggml, projectors, opts)
+		if allLayers {
 			return true, estimatedVRAM, nil
 		}
 	}
 	return false, estimatedVRAM, nil
 }
 
-// Given a model and one or more GPU targets, predict how many layers and bytes we can load
+// Given a model and one or more GPU targets, predict how many layers and bytes we can load, and true
+// if this satisfies opts.NumGPU
 // The GPUs provided must all be the same Library
-func PredictGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64) {
+func PredictGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) (int, uint64, bool) {
 	if gpus[0].Library == "cpu" {
-		return 0, 0
+		return 0, 0, false
 	}
 	memoryAvailable := uint64(0)
 	for _, info := range gpus {
@@ -75,7 +76,7 @@ func PredictGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts 
 	if gpus[0].Library != "metal" {
 		if memoryRequiredPartial > memoryAvailable {
 			slog.Debug("insufficient VRAM to load any model layers")
-			return 0, 0
+			return 0, 0, false
 		}
 	}
 
@@ -101,8 +102,12 @@ func PredictGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts 
 		memoryRequiredPartial = memoryRequiredTotal
 	}
 
+	var allLayers bool
 	if opts.NumGPU < 0 {
 		opts.NumGPU = layerCount
+		allLayers = layerCount >= int(ggml.KV().BlockCount()+1)
+	} else {
+		allLayers = layerCount >= opts.NumGPU
 	}
 
 	slog.Info(
@@ -116,5 +121,5 @@ func PredictGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts 
 		"fulloffload", format.HumanBytes2(graphFullOffload),
 		"partialoffload", format.HumanBytes2(graphPartialOffload),
 	)
-	return layerCount, uint64(memoryMinimum)
+	return layerCount, uint64(memoryRequiredTotal), allLayers
 }

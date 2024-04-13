@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/format"
 )
 
 // Discovery logic for AMD/ROCm GPUs
@@ -44,7 +46,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		slog.Info("AMD Driver: " + ver)
 	} else {
 		// TODO - if we see users crash and burn with the upstreamed kernel this can be adjusted to hard-fail rocm support and fallback to CPU
-		slog.Warn(fmt.Sprintf("ollama recommends running the https://www.amd.com/en/support/linux-drivers: %s", err))
+		slog.Warn("ollama recommends running the https://www.amd.com/en/support/linux-drivers", "error", err)
 	}
 
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
@@ -76,13 +78,13 @@ func AMDGetGPUInfo() []GpuInfo {
 		slog.Debug("evaluating amdgpu node " + match)
 		fp, err := os.Open(match)
 		if err != nil {
-			slog.Debug(fmt.Sprintf("failed to open sysfs node file %s: %s", match, err))
+			slog.Debug("failed to open sysfs node", "file", match, "error", err)
 			continue
 		}
 		defer fp.Close()
 		nodeID, err := strconv.Atoi(filepath.Base(filepath.Dir(match)))
 		if err != nil {
-			slog.Debug(fmt.Sprintf("failed to parse node ID %s", err))
+			slog.Debug("failed to parse node ID", "error", err)
 			continue
 		}
 
@@ -138,7 +140,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		}
 
 		if int(major) < RocmComputeMin {
-			slog.Warn(fmt.Sprintf("amdgpu [%d] too old gfx%d%d%d", gpuID, major, minor, patch))
+			slog.Warn(fmt.Sprintf("amdgpu too old gfx%d%d%d", major, minor, patch), "gpu", gpuID)
 			continue
 		}
 
@@ -148,13 +150,13 @@ func AMDGetGPUInfo() []GpuInfo {
 		propGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(nodeID), GPUTotalMemoryFileGlob)
 		propFiles, err := filepath.Glob(propGlob)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("error looking up total GPU memory: %s %s", propGlob, err))
+			slog.Warn("error looking up total GPU memory", "glob", propGlob, "error", err)
 		}
 		// 1 or more memory banks - sum the values of all of them
 		for _, propFile := range propFiles {
 			fp, err := os.Open(propFile)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("failed to open sysfs node file %s: %s", propFile, err))
+				slog.Warn("failed to open sysfs node", "file", propFile, "erroir", err)
 				continue
 			}
 			defer fp.Close()
@@ -177,30 +179,30 @@ func AMDGetGPUInfo() []GpuInfo {
 			}
 		}
 		if totalMemory == 0 {
-			slog.Warn(fmt.Sprintf("amdgpu [%d] reports zero total memory", gpuID))
+			slog.Warn("amdgpu [%d] reports zero total memory", "gpu", gpuID)
 			continue
 		}
 		usedGlob := filepath.Join(AMDNodesSysfsDir, strconv.Itoa(nodeID), GPUUsedMemoryFileGlob)
 		usedFiles, err := filepath.Glob(usedGlob)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("error looking up used GPU memory: %s %s", usedGlob, err))
+			slog.Warn("error looking up used GPU memory", "glob", usedGlob, "error", err)
 			continue
 		}
 		for _, usedFile := range usedFiles {
 			fp, err := os.Open(usedFile)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("failed to open sysfs node file %s: %s", usedFile, err))
+				slog.Warn("failed to open sysfs node", "file", usedFile, "error", err)
 				continue
 			}
 			defer fp.Close()
 			data, err := io.ReadAll(fp)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("failed to read sysfs node file %s: %s", usedFile, err))
+				slog.Warn("failed to read sysfs node", "file", usedFile, "error", err)
 				continue
 			}
 			used, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("malformed used memory %s: %s", string(data), err))
+				slog.Warn("malformed used memory", "data", string(data), "error", err)
 				continue
 			}
 			usedMemory += used
@@ -208,12 +210,12 @@ func AMDGetGPUInfo() []GpuInfo {
 
 		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
 		if totalMemory < IGPUMemLimit {
-			slog.Info(fmt.Sprintf("amdgpu [%d] appears to be an iGPU with %dM reported total memory, skipping", gpuID, totalMemory/1024/1024))
+			slog.Info("amdgpu appears to be an iGPU, skipping", "gpu", gpuID, "totalMB", totalMemory/format.MebiByte)
 			continue
 		}
 
-		slog.Info(fmt.Sprintf("[%d] amdgpu totalMemory %dM", gpuID, totalMemory/1024/1024))
-		slog.Info(fmt.Sprintf("[%d] amdgpu freeMemory  %dM", gpuID, (totalMemory-usedMemory)/1024/1024))
+		slog.Info("amdgpu memory", "gpu", gpuID, "totalMB", totalMemory/format.MebiByte)
+		slog.Info("amdgpu memory", "gpu", gpuID, "freeMB", (totalMemory-usedMemory)/format.MebiByte)
 		gpuInfo := GpuInfo{
 			Library: "rocm",
 			memInfo: memInfo{
@@ -248,7 +250,7 @@ func AMDGetGPUInfo() []GpuInfo {
 		if libDir == "" {
 			libDir, err = AMDValidateLibDir()
 			if err != nil {
-				slog.Warn(fmt.Sprintf("unable to verify rocm library, will use cpu: %s", err))
+				slog.Warn("unable to verify rocm library, will use cpu", "error", err)
 				return []GpuInfo{}
 			}
 		}
@@ -259,19 +261,19 @@ func AMDGetGPUInfo() []GpuInfo {
 			if len(supported) == 0 {
 				supported, err = GetSupportedGFX(libDir)
 				if err != nil {
-					slog.Warn(fmt.Sprintf("failed to lookup supported GFX types, falling back to CPU mode: %s", err))
+					slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
 					return []GpuInfo{}
 				}
-				slog.Debug(fmt.Sprintf("rocm supported GPU types %v", supported))
+				slog.Debug("rocm supported GPUs", "types", supported)
 			}
 			gfx := fmt.Sprintf("gfx%d%d%d", gpuInfo.Major, gpuInfo.Minor, gpuInfo.Patch)
 			if !slices.Contains[[]string, string](supported, gfx) {
-				slog.Warn(fmt.Sprintf("[%s] amdgpu %s is not supported by %s %v", gpuInfo.ID, gfx, libDir, supported))
+				slog.Warn("amdgpu is not supported", "gpu", gpuInfo.ID, "gpu_type", gfx, "library", libDir, "supported_types", supported)
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
 				continue
 			} else {
-				slog.Info(fmt.Sprintf("amdgpu [%s] %s is supported", gpuInfo.ID, gfx))
+				slog.Info("amdgpu is supported", "gpu", gpuInfo.ID, "gpu_type", gfx)
 			}
 		} else {
 			slog.Debug("skipping rocm gfx compatibility check with HSA_OVERRIDE_GFX_VERSION=" + gfxOverride)
@@ -295,7 +297,7 @@ func AMDDetected() bool {
 		slog.Debug("amdgpu driver not detected " + sysfsDir)
 		return false
 	} else if err != nil {
-		slog.Debug(fmt.Sprintf("error looking up amd driver %s %s", sysfsDir, err))
+		slog.Debug("error looking up amd driver", "path", sysfsDir, "error", err)
 		return false
 	}
 	return true
