@@ -60,11 +60,6 @@ git_module_setup() {
 }
 
 apply_patches() {
-    # Wire up our CMakefile
-    if ! grep ollama ${LLAMACPP_DIR}/CMakeLists.txt; then
-        echo 'add_subdirectory(../ext_server ext_server) # ollama' >>${LLAMACPP_DIR}/CMakeLists.txt
-    fi
-
     if [ -n "$(ls -A ../patches/*.diff)" ]; then
         # apply temporary patches until fix is upstream
         for patch in ../patches/*.diff; do
@@ -76,6 +71,12 @@ apply_patches() {
             (cd ${LLAMACPP_DIR} && git apply ${patch})
         done
     fi
+
+    # Wire up our CMakefile last in case any patches also touched the file
+    if ! grep ollama ${LLAMACPP_DIR}/CMakeLists.txt; then
+        echo 'add_subdirectory(../ext_server ext_server) # ollama' >>${LLAMACPP_DIR}/CMakeLists.txt
+    fi
+
 }
 
 build() {

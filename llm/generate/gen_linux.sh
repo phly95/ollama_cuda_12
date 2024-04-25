@@ -135,6 +135,19 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 build
                 compress
             fi
+
+            if [ -z "${OLLAMA_CPU_TARGET}" -o "${OLLAMA_CPU_TARGET}" = "cpu_avx512" ]; then
+                #
+                # ~2021 CPU Dynamic library
+                #
+                init_vars
+                CMAKE_DEFS="${COMMON_CPU_DEFS} -DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_AVX512=on -DLLAMA_AVX512_VBMI=off -DLLAMA_AVX512_VNNI=on -DLLAMA_FMA=on -DLLAMA_F16C=on ${CMAKE_DEFS}"
+                BUILD_DIR="../build/linux/${ARCH}/cpu_avx512"
+                echo "Building AVX512 CPU"
+                build
+                compress
+            fi
+
         fi
     fi
 else

@@ -69,6 +69,8 @@ FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx-build-amd64
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx" sh gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx2-build-amd64
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" sh gen_linux.sh
+FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx512-build-amd64
+RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx512" sh gen_linux.sh
 
 FROM --platform=linux/arm64 centos:7 AS cpu-builder-arm64
 ARG CMAKE_VERSION
@@ -95,6 +97,7 @@ COPY . .
 COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cpu_avx512-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/deps/ ./dist/deps/

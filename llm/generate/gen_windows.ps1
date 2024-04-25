@@ -36,6 +36,7 @@ function init_vars {
     $script:cmakeTargets = @("ollama_llama_server")
     $script:ARCH = "amd64" # arm not yet supported.
     $script:DIST_BASE = "${script:SRC_DIR}\dist\windows-${script:ARCH}\ollama_runners"
+    mkdir ${script:DIST_BASE} -ErrorAction SilentlyContinue
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on", "-DCMAKE_BUILD_TYPE=RelWithDebInfo")
         $script:config = "RelWithDebInfo"
@@ -74,7 +75,10 @@ function init_vars {
 }
 
 function git_module_setup {
-    # TODO add flags to skip the init/patch logic to make it easier to mod llama.cpp code in-repo
+    if ("${env:OLLAMA_SKIP_PATCHING}") {
+        write-host "Skipping submodule initialization"
+        return
+    }
     & git submodule init
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     & git submodule update --force "${script:llamacppDir}"
@@ -82,6 +86,11 @@ function git_module_setup {
 }
 
 function apply_patches {
+    if ("${env:OLLAMA_SKIP_PATCHING}") {
+        write-host "Skipping submodule initialization"
+        return
+    }
+
     # Wire up our CMakefile
     if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
         Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
@@ -150,6 +159,10 @@ function install {
 }
 
 function cleanup {
+    if ("${env:OLLAMA_SKIP_PATCHING}") {
+        write-host "Skipping cleanup"
+        return
+    }
     $patches = Get-ChildItem "../patches/*.diff"
     foreach ($patch in $patches) {
         # Extract file paths from the patch file
@@ -167,6 +180,14 @@ function cleanup {
 }
 
 init_vars
+
+if ($($args.count) -gt 0 ) {
+    for ( $i = 0; $i -lt $args.count; $i++ ) {
+        write-host "Running $($args[$i])"
+        & $args[$i]
+    }  
+    return
+}
 git_module_setup
 apply_patches
 
@@ -176,64 +197,83 @@ apply_patches
 
 $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
 
-if ($null -eq ${env:OLLAMA_SKIP_CPU_GENERATE}) {
-
-# GCC build for direct linking into the Go binary
-init_vars
-# cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
-# as we need this to be compiled by gcc for golang to be able to link with itx
-write-host "Checking for MinGW..."
-# error action ensures we exit on failure
-get-command gcc
-get-command mingw32-make
-$script:cmakeTargets = @("llama", "ggml")
-$script:cmakeDefs = @(
-    "-G", "MinGW Makefiles"
-    "-DCMAKE_C_COMPILER=gcc.exe",
-    "-DCMAKE_CXX_COMPILER=g++.exe",
-    "-DBUILD_SHARED_LIBS=off",
-    "-DLLAMA_NATIVE=off",
-    "-DLLAMA_AVX=off",
-    "-DLLAMA_AVX2=off",
-    "-DLLAMA_AVX512=off",
-    "-DLLAMA_F16C=off",
-    "-DLLAMA_FMA=off")
-$script:buildDir="../build/windows/${script:ARCH}_static"
-write-host "Building static library"
-build
+if ((-not "${env:OLLAMA_SKIP_STATIC_GENERATE}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "static")) {
+    # GCC build for direct linking into the Go binary
+    init_vars
+    # cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
+    # as we need this to be compiled by gcc for golang to be able to link with itx
+    write-host "Checking for MinGW..."
+    # error action ensures we exit on failure
+    get-command gcc
+    get-command mingw32-make
+    $script:cmakeTargets = @("llama", "ggml")
+    $script:cmakeDefs = @(
+        "-G", "MinGW Makefiles"
+        "-DCMAKE_C_COMPILER=gcc.exe",
+        "-DCMAKE_CXX_COMPILER=g++.exe",
+        "-DBUILD_SHARED_LIBS=off",
+        "-DLLAMA_NATIVE=off",
+        "-DLLAMA_AVX=off",
+        "-DLLAMA_AVX2=off",
+        "-DLLAMA_AVX512=off",
+        "-DLLAMA_F16C=off",
+        "-DLLAMA_FMA=off")
+    $script:buildDir="../build/windows/${script:ARCH}_static"
+    write-host "Building static library"
+    build
+}
 
 # remaining llama.cpp builds use MSVC 
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu"
-    $script:distDir="$script:DIST_BASE\cpu"
-    write-host "Building LCD CPU"
-    build
-    sign
-    install
+if (-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) {
+    if ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu")) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=off", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $script:distDir="$script:DIST_BASE\cpu"
+        write-host "Building LCD CPU"
+        build
+        sign
+        install
+    }
 
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
-    $script:distDir="$script:DIST_BASE\cpu_avx"
-    write-host "Building AVX CPU"
-    build
-    sign
-    install
+    if ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx")) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=off", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=off", "-DLLAMA_F16C=off") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx"
+        $script:distDir="$script:DIST_BASE\cpu_avx"
+        write-host "Building AVX CPU"
+        build
+        sign
+        install
+    }
 
-    init_vars
-    $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
-    $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
-    $script:distDir="$script:DIST_BASE\cpu_avx2"
-    write-host "Building AVX2 CPU"
-    build
-    sign
-    install
+    if ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx2")) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=off", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx2"
+        $script:distDir="$script:DIST_BASE\cpu_avx2"
+        write-host "Building AVX2 CPU"
+        build
+        sign
+        install
+    }
+
+    if ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx512")) {
+        init_vars
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DLLAMA_AVX=on", "-DLLAMA_AVX2=on", "-DLLAMA_AVX512=on", "-DLLAMA_AVX512_VBMI=on", "-DLLAMA_AVX512_VNNI=on", "-DLLAMA_FMA=on", "-DLLAMA_F16C=on") + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_avx512"
+        $script:distDir="$script:DIST_BASE\cpu_avx512"
+        write-host "Building AVX512 CPU"
+        build
+        sign
+        install
+    }
+
 } else {
     write-host "Skipping CPU generation step as requested"
 }
 
-if ($null -ne $script:CUDA_LIB_DIR) {
+if ((-not "${env:OLLAMA_SKIP_CUDA_GENERATE}") -and ($null -ne "${script:CUDA_LIB_DIR}")) {
     # Then build cuda as a dynamically loaded library
     $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
     $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
@@ -254,7 +294,7 @@ if ($null -ne $script:CUDA_LIB_DIR) {
     install
 }
 
-if ($null -ne $env:HIP_PATH) {
+if ((-not "${env:OLLAMA_SKIP_ROCM_GENERATE}") -and ($null -ne "${env:HIP_PATH}")) {
     $script:ROCM_VERSION=(get-item $env:HIP_PATH).Basename
     if ($null -ne $script:ROCM_VERSION) {
         $script:ROCM_VARIANT="_v"+$script:ROCM_VERSION
