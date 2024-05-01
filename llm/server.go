@@ -300,19 +300,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			continue
 		}
 
-		// reap subprocess when it exits
-		go func() {
-			// Exit status managed via getServerStatus
-			_ = s.cmd.Wait()
-		}()
-
-		// TODO - make sure this is all wired up correctly
-		// if err = s.WaitUntilRunning(); err != nil {
-		// 	slog.Error("error starting llama server", "server", servers[i], "error", err)
-		// 	s.Close()
-		// 	finalErr = err
-		// 	continue
-		// }
 		return s, nil
 	}
 
@@ -903,7 +890,10 @@ func (s *llmServer) Close() error {
 			return err
 		}
 
-		_ = s.cmd.Wait()
+		if err := s.cmd.Wait(); err != nil {
+			slog.Debug("wait error in server close", "error", err)
+			// Non critical error, don't bubble up
+		}
 
 		slog.Debug("llama server stopped")
 	}
