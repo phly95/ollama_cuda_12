@@ -97,6 +97,13 @@ var CudaTegra string = os.Getenv("JETSON_JETPACK")
 // Note: gpuMutex must already be held
 func initGPUHandles() *handles {
 
+	err := GetFreeVRAM()
+	if err != nil {
+		panic(err.Error())
+	}
+
+	slog.Error("Exiting fast for testing...")
+	os.Exit(1)
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
 	gpuHandles := &handles{}
