@@ -9,12 +9,14 @@ jobs:
 
   # Aggregate all the assets and ship a release
   release:
-    runs-on: ubuntu
+    runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
       OLLAMA_SKIP_IMAGE_BUILD: '1'
       PUSH: '1'
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Set Version
@@ -24,20 +26,26 @@ jobs:
           echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
       - run: |
           mkdir dist/
-          echo "hello world" > dist/payload
+          echo "hello world $(date)" > dist/payload
       - run: |
           ls -lh dist/
           (cd dist; sha256sum * > sha256sum.txt)
           cat dist/sha256sum.txt
-      - uses: ncipollo/release-action@v1
-        with:
-          name: ${{ env.RELEASE_VERSION }}
-          allowUpdates: true
-          artifacts: 'dist/*'
-          draft: true
-          prerelease: true
-          omitBodyDuringUpdate: true
-          generateReleaseNotes: true
-          omitDraftDuringUpdate: true
-          omitPrereleaseDuringUpdate: true
-          replacesArtifacts: true
+      - name: Create or update Release
+        run: |
+          env | sort
+          echo "Looking for existing release for ${{ env.RELEASE_VERSION }}"
+          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${{ env.RELEASE_VERSION }}\") | .tagName")
+          if [ -n "$OLD_TAG" ]; then
+            echo "Updating release ${{ env.RELEASE_VERSION }} to point to new tag ${GITHUB_REF_NAME}"
+            gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
+          else
+            echo "Creating new release ${{ env.RELEASE_VERSION }} pointing to tag ${GITHUB_REF_NAME}"
+            gh release create ${GITHUB_REF_NAME} \
+              --title ${{ env.RELEASE_VERSION }} \
+              --draft \
+              --generate-notes \
+              --prerelease
+          fi
+          echo "Uploading artifacts for tag ${GITHUB_REF_NAME}"
+          gh release upload ${GITHUB_REF_NAME} dist/* --clobber 
