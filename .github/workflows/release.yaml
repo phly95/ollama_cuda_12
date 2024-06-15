@@ -24,7 +24,7 @@ jobs:
           echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
       - run: |
           mkdir dist/
-          echo "hello world" > payload
+          echo "hello world" > dist/payload
       - run: |
           ls -lh dist/
           (cd dist; sha256sum * > sha256sum.txt)
