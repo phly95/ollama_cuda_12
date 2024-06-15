@@ -9,7 +9,7 @@ jobs:
 
   # Aggregate all the assets and ship a release
   release:
-    runs-on: ubuntu
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
@@ -29,15 +29,18 @@ jobs:
           ls -lh dist/
           (cd dist; sha256sum * > sha256sum.txt)
           cat dist/sha256sum.txt
-      - uses: ncipollo/release-action@v1
-        with:
-          name: ${{ env.RELEASE_VERSION }}
-          allowUpdates: true
-          artifacts: 'dist/*'
-          draft: true
-          prerelease: true
-          omitBodyDuringUpdate: true
-          generateReleaseNotes: true
-          omitDraftDuringUpdate: true
-          omitPrereleaseDuringUpdate: true
-          replacesArtifacts: true
+      - name: Create or update Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.html_url }}
+        run: |
+          if ! gh release view ${{ env.RELEASE_VERSION }} ; then
+            gh release create \
+              --draft \
+              --generate-notes \
+              --prerelease \
+              --target ${GITHUB_REF_NAME}
+          else
+            echo "Release ${{ env.RELEASE_VERSION }} already exists"
+          fi
+          gh release upload ${{ env.RELEASE_VERSION }} dist/* --clober 
