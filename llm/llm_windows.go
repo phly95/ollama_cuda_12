@@ -9,6 +9,7 @@ import (
 var libEmbed embed.FS
 
 const CREATE_DEFAULT_ERROR_MODE = 0x04000000
+const ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
 
 var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	// Wire up the default error handling logic If for some reason a DLL is
@@ -16,5 +17,5 @@ var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	// the user can either fix their PATH, or report a bug. Without this
 	// setting, the process exits immediately with a generic exit status but no
 	// way to (easily) figure out what the actual missing DLL was.
-	CreationFlags: CREATE_DEFAULT_ERROR_MODE,
+	CreationFlags: CREATE_DEFAULT_ERROR_MODE | ABOVE_NORMAL_PRIORITY_CLASS,
 }
