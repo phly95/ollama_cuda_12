@@ -42,6 +42,7 @@ init_vars() {
     if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
+    DIST_BASE="../../dist/$(uname -s | tr '[:upper:]' '[:lower:]')-${ARCH}/ollama_runners"
 }
 
 git_module_setup() {
@@ -81,6 +82,19 @@ apply_patches() {
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
     cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
+}
+
+dist() {
+    mkdir -p ${DIST_DIR}
+    for f in ${BUILD_DIR}/bin/* ; do
+        cp ${f} ${DIST_DIR}/
+    done
+    # check for lib directory
+    if [ -d ${BUILD_DIR}/lib ]; then
+        for f in ${BUILD_DIR}/lib/* ; do
+            cp ${f} ${DIST_DIR}/
+        done
+    fi
 }
 
 compress() {

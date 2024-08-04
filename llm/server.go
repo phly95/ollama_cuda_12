@@ -339,6 +339,36 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 
+		// Allow easier subprocess debugging
+		if envconfig.Debug && os.Getenv("OLLAMA_DEBUG_RUNNER") != "" {
+			if envconfig.NewRunners {
+				slog.Info("starting runner under dlv - connect to proceed")
+				finalParams = append([]string{
+					"--listen=:1434",
+					"--headless=true",
+					"--api-version=2",
+					"exec", "ollama_runner", "--",
+				}, finalParams...)
+				server = "dlv"
+			} else {
+				if runtime.GOOS == "darwin" {
+					// TODO - this doesn't work
+					// Attempted debugserver, lldb-dap
+					slog.Info("starting runner under debuserver - connect to proceed")
+					finalParams = append([]string{
+						"localhost:1434",
+						server, "--",
+					}, finalParams...)
+					server = "/Applications/Xcode.app/Contents/SharedFrameworks/LLDB.framework/Resources/debugserver"
+
+				} else if runtime.GOOS == "linux" {
+					// TODO
+				} else if runtime.GOOS == "windows" {
+					// TODO
+				}
+			}
+		}
+
 		m, err := loadModel(model, true)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load model for tokenization %w", err)
@@ -357,6 +387,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		s.cmd.Env = os.Environ()
+		s.cmd.Dir = dir
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr

@@ -21,21 +21,21 @@ import (
 var errPayloadMissing = errors.New("expected payloads not included in this build of ollama")
 
 func Init() error {
-	payloadsDir, err := gpu.PayloadsDir()
-	if err != nil {
-		return err
-	}
+	// payloadsDir, err := gpu.PayloadsDir()
+	// if err != nil {
+	// 	return err
+	// }
 
-	if runtime.GOOS != "windows" {
-		slog.Info("extracting embedded files", "dir", payloadsDir)
-		binGlob := "build/*/*/*/bin/*"
+	// if runtime.GOOS != "windows" {
+	// 	slog.Info("extracting embedded files", "dir", payloadsDir)
+	// 	binGlob := "build/*/*/*/bin/*"
 
-		// extract server libraries
-		err = extractFiles(payloadsDir, binGlob)
-		if err != nil {
-			return fmt.Errorf("extract binaries: %v", err)
-		}
-	}
+	// 	// extract server libraries
+	// 	err = extractFiles(payloadsDir, binGlob)
+	// 	if err != nil {
+	// 		return fmt.Errorf("extract binaries: %v", err)
+	// 	}
+	// }
 
 	var variants []string
 	for v := range getAvailableServers() {

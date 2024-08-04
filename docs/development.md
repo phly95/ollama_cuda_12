@@ -148,3 +148,70 @@ In addition to the common Windows development tools described above, install AMD
 - [Strawberry Perl](https://strawberryperl.com/)
 
 Lastly, add `ninja.exe` included with MSVC to the system path (e.g. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`).
+
+## Debugging Runner
+
+By setting `OLLAMA_DEBUG=1` and `OLLAMA_DEBUG_RUNNER=1` the `ollama serve` will launch the runner subprocess under a remote debugging session, which allows you to set breakpoints in either the `ollama serve` code, or the subprocess Go or C++ code. (TODO - C++ doesn't work yet...)
+
+Note: When you terminate the `ollama serve` typically the subprocess will not be shutdown.  Use `killall ollama_runner` to clean up before starting a new debugging session.
+
+The following `launch.json` shows how this can be configured in VSCode:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+        {
+            "name": "Start ollama serve with New Go Runner",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/main.go",
+            "args": ["serve"],
+            "env": {
+                "OLLAMA_NEW_RUNNERS": "1",
+                "OLLAMA_DEBUG": "1",
+                "OLLAMA_DEBUG_RUNNER": "1",
+                "OLLAMA_RUNNERS_DIR": "${workspaceRoot}/dist/darwin-arm64/ollama_runners"
+            },
+            "postDebugTask": "killall ollama_runner"
+        },
+        {
+            "name": "Connect to Go runner",
+            "type": "go",
+            "request": "attach",
+            "mode":"remote",
+            "port": 1434
+        },
+  ]
+}
+```
+
+And corresponding kill tasks from tasks.json
+```
+        {
+            "label": "killall ollama_runner",
+            "command": "killall ollama_runner"
+        },
+        {
+            "label": "killall ollama_llama_server",
+            "command": "killall ollama_llama_server; killall debugserver"
+        }
+```
+
+DO NOT MERGE - notes on trying to get C++ working...
+
+TODO - maybe?
+```
+brew install llvm
+ln -s $(brew --prefix)/opt/llvm/bin/lldb-dap $(brew --prefix)/bin/
+```
+
+LLDB DAP extension
+
+^^ that didn't work
+
+--
+Native Debub extension maybe?
+
+ln -s $(brew --prefix)/opt/llvm/bin/lldb-server $(brew --prefix)/bin/

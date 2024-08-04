@@ -14,6 +14,15 @@ comma:= ,
 empty:=
 space:= $(empty) $(empty)
 
+ifneq (,$(findstring -g,$(CGO_CFLAGS)))
+	DEBUG_FLAGS := -g
+	GO_LDFLAGS := 
+else
+	DEBUG_FLAGS :=
+	GO_LDFLAGS := -s -w
+endif
+
+
 export CGO_CFLAGS_ALLOW = -mfma|-mf16c
 export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
 export HIP_PLATFORM = amd
@@ -124,6 +133,7 @@ HIP_OBJS := $(HIP_OBJS:.c=.hip.$(OBJ_EXT))
 HIP_OBJS := $(addprefix $(BUILD_DIR)/,$(HIP_OBJS:.cpp=.hip.$(OBJ_EXT)))
 
 CUDA_FLAGS := \
+	$(DEBUG_FLAGS) \
 	-t4 \
 	-DGGML_CUDA_DMMV_X=32 \
 	-DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
@@ -173,6 +183,7 @@ HIP_ARCHS := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101
 LINUX_HIP_ARCHS := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
 
 HIP_FLAGS := \
+	$(DEBUG_FLAGS) \
 	-c \
 	-O3 \
 	-DGGML_USE_CUDA \
@@ -326,27 +337,27 @@ $(ROCM_LIB_DEPS):
 
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_runner$(EXE_EXT): *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "$(GO_LDFLAGS)" -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx/ollama_runner$(EXE_EXT): *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "$(GO_LDFLAGS)" -tags avx -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_runner$(EXE_EXT): *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "$(GO_LDFLAGS)" -tags avx,avx2 -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cuda_v11/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v11/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v11/" go build -ldflags "$(GO_LDFLAGS)" -tags avx,cuda -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v12/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v12/" go build -ldflags "$(GO_LDFLAGS)" -tags avx,cuda -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT) *.go ./runner/*.go 
 	@-mkdir -p $(dir $@)
-	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/" go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
+	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/" go build -ldflags "$(GO_LDFLAGS)" -tags avx,rocm -o $@ ./runner
 
 
 $(ROCBLAS_DEP_MANIFEST):
