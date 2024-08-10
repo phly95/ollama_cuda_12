@@ -13,6 +13,9 @@ endif
 comma:= ,
 empty:=
 space:= $(empty) $(empty)
+CCACHE := $(shell X=$$(which ccache 2>/dev/null) && echo $$X)
+GZIP := $(shell X=$$(which pigz 2>/dev/null) && echo $$X || echo gzip)
+
 
 export CGO_CFLAGS_ALLOW = -mfma|-mf16c
 export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
@@ -79,8 +82,8 @@ CUDA_12_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(CUDA_12_LIB
 NVCC_11 = $(CUDA_11)/bin/nvcc
 NVCC_12 = $(CUDA_12)/bin/nvcc
 
-CUDA_DEPS_DIR = $(DIST_BASE)cuda/
-ROCM_DEPS_DIR = $(DIST_BASE)rocm/
+CUDA_DEPS_DIR = $(DIST_BASE)/ollama_libs/
+ROCM_DEPS_DIR = $(DIST_BASE)/ollama_libs/
 
 ifneq ($(CUDA_11),)
 	CUDA_11_VARIANT= _v11
@@ -263,27 +266,27 @@ runners: $(BUILD_RUNNERS)
 
 $(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
-	$(NVCC_11) -c $(CUDA_FLAGS) $(CUDA_11_FLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_11) -c $(CUDA_FLAGS) $(CUDA_11_FLAGS) -o $@ $<
 
 $(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
-	$(NVCC_11) -c $(NVCC_CFLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_11) -c $(NVCC_CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/cuda_v11/%.cuda.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
-	$(NVCC_11) -c $(NVCC_CXXFLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_11) -c $(NVCC_CXXFLAGS) -o $@ $<
 
 $(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
-	$(NVCC_12) -c $(CUDA_FLAGS) $(CUDA_12_FLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_12) -c $(CUDA_FLAGS) $(CUDA_12_FLAGS) -o $@ $<
 
 $(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
-	$(NVCC_12) -c $(NVCC_CFLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_12) -c $(NVCC_CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/cuda_v12/%.cuda.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
-	$(NVCC_12) -c $(NVCC_CXXFLAGS) -o $@ $<
+	$(CCACHE) $(NVCC_12) -c $(NVCC_CXXFLAGS) -o $@ $<
 
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)
@@ -296,11 +299,11 @@ $(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOA
 
 $(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_11_OBJS) $(CUDA_11_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
-	$(NVCC_11) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_11_FLAGS) $(CUDA_11_OBJS) -o $@
+	$(CCACHE) $(NVCC_11) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_11_FLAGS) $(CUDA_11_OBJS) -o $@
 
 $(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_12_OBJS) $(CUDA_12_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
-	$(NVCC_12) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_12_FLAGS) $(CUDA_12_OBJS) -o $@
+	$(CCACHE) $(NVCC_12) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_12_FLAGS) $(CUDA_12_OBJS) -o $@
 
 $(CUDA_11_LIB_DEPS): 
 	@-mkdir -p $(dir $@)
@@ -312,22 +315,22 @@ $(CUDA_12_LIB_DEPS):
 
 $(BUILD_DIR)/%.hip.$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
-	$(HIPCC) -c $(HIP_FLAGS) -o $@ $<
+	$(CCACHE) $(HIPCC) -c $(HIP_FLAGS) -o $@ $<
 
 $(BUILD_DIR)/%.hip.$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
-	$(HIPCC) -c $(HIPCC_CFLAGS) -o $@ $<
+	$(CCACHE) $(HIPCC) -c $(HIPCC_CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/%.hip.$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
-	$(HIPCC) -c $(HIPCC_CXXFLAGS) -o $@ $<
+	$(CCACHE) $(HIPCC) -c $(HIPCC_CXXFLAGS) -o $@ $<
 
 $(RUNNERS_DIST_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
 $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT).gz
 
 $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS) $(ROCM_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
-	$(HIPCC) --shared -lamdhip64 -L${ROCM_DEPS_DIR} $(foreach lib, $(ROCM_LIBS_SHORT), -l$(lib)) $(HIP_OBJS) -o $@
+	$(CCACHE) $(HIPCC) --shared -lamdhip64 -L${ROCM_DEPS_DIR} $(foreach lib, $(ROCM_LIBS_SHORT), -l$(lib)) $(HIP_OBJS) -o $@
 
 $(ROCM_LIB_DEPS): 
 	@-mkdir -p $(dir $@)
@@ -367,16 +370,16 @@ $(ROCBLAS_DEP_MANIFEST):
 
 $(RUNNERS_PAYLOAD_DIR)/%/bin/ollama_runner.gz: $(RUNNERS_BUILD_DIR)/%/ollama_runner
 	@-mkdir -p $(dir $@)
-	gzip --best -c $< > $@
+	$(GZIP) --best -c $< > $@
 $(RUNNERS_PAYLOAD_DIR)/cuda_v11/bin/%.gz: $(RUNNERS_BUILD_DIR)/cuda_v11/%
 	@-mkdir -p $(dir $@)
-	gzip --best -c $< > $@
+	$(GZIP) --best -c $< > $@
 $(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/%.gz: $(RUNNERS_BUILD_DIR)/cuda_v12/%
 	@-mkdir -p $(dir $@)
-	gzip --best -c $< > $@
+	$(GZIP) --best -c $< > $@
 $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/%.gz: $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/%
 	@-mkdir -p $(dir $@)
-	gzip --best -c $< > $@
+	$(GZIP) --best -c $< > $@
 
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
