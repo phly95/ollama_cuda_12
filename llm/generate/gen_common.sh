@@ -51,6 +51,7 @@ init_vars() {
     fi
     DIST_BASE=../../dist/${OS}-${GOARCH}
     RUNNER_BASE=${DIST_BASE}/ollama_runners
+    GZIP=$(which pigz 2>/dev/null || echo "gzip")
 }
 
 git_module_setup() {
@@ -106,21 +107,23 @@ install() {
 
 compress() {
     echo "Compressing payloads to reduce overall binary size..."
-    pids=""
     rm -rf ${BUILD_DIR}/bin/*.gz
     for f in ${BUILD_DIR}/bin/* ; do
-        gzip -n --best -f ${f} &
-        pids+=" $!"
+        ${GZIP} -n --best -f ${f} &
+        compress_pids+=" $!"
     done
     # check for lib directory
     if [ -d ${BUILD_DIR}/lib ]; then
         for f in ${BUILD_DIR}/lib/* ; do
-            gzip -n --best -f ${f} &
-            pids+=" $!"
+            ${GZIP} -n --best -f ${f} &
+            compress_pids+=" $!"
         done
     fi
     echo
-    for pid in ${pids}; do
+}
+
+wait_for_compress() {
+    for pid in ${compress_pids}; do
         wait $pid
     done
     echo "Finished compression"
