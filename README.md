@@ -4,7 +4,7 @@
 
 # Ollama
 
-[![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
+[![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama) [![release](https://github.com/phly95/ollama_cuda_12/actions/workflows/release.yaml/badge.svg)](https://github.com/phly95/ollama_cuda_12/actions/workflows/release.yaml)
 
 Get up and running with large language models.
 
