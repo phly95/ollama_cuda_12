@@ -19,14 +19,6 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
       {"nvmlShutdown", (void *)&resp->ch.nvmlShutdown},
       {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.nvmlDeviceGetHandleByIndex},
       {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.nvmlDeviceGetMemoryInfo},
-      {"nvmlDeviceGetCount_v2", (void *)&resp->ch.nvmlDeviceGetCount_v2},
-      {"nvmlDeviceGetCudaComputeCapability", (void *)&resp->ch.nvmlDeviceGetCudaComputeCapability},
-      {"nvmlSystemGetDriverVersion", (void *)&resp->ch.nvmlSystemGetDriverVersion},
-      {"nvmlDeviceGetName", (void *)&resp->ch.nvmlDeviceGetName},
-      {"nvmlDeviceGetSerial", (void *)&resp->ch.nvmlDeviceGetSerial},
-      {"nvmlDeviceGetVbiosVersion", (void *)&resp->ch.nvmlDeviceGetVbiosVersion},
-      {"nvmlDeviceGetBoardPartNumber", (void *)&resp->ch.nvmlDeviceGetBoardPartNumber},
-      {"nvmlDeviceGetBrand", (void *)&resp->ch.nvmlDeviceGetBrand},
       {NULL, NULL},
   };
 
@@ -43,14 +35,14 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
   }
 
   // TODO once we've squashed the remaining corner cases remove this log
-  LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
+  // LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
   
   for (i = 0; l[i].s != NULL; i++) {
     // TODO once we've squashed the remaining corner cases remove this log
-    LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
+    // LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
 
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
-    if (!l[i].p) {
+    if (!*(l[i].p)) {
       resp->ch.handle = NULL;
       char *msg = LOAD_ERR();
       LOG(resp->ch.verbose, "dlerr: %s\n", msg);
@@ -72,143 +64,41 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
     resp->err = strdup(buf);
     return;
   }
-
-  // Report driver version if we're in verbose mode, ignore errors
-  ret = (*resp->ch.nvmlSystemGetDriverVersion)(buf, buflen);
-  if (ret != NVML_SUCCESS) {
-    LOG(resp->ch.verbose, "nvmlSystemGetDriverVersion failed: %d\n", ret);
-  } else {
-    LOG(resp->ch.verbose, "CUDA driver version: %s\n", buf);
-  }
 }
 
-void nvml_check_vram(nvml_handle_t h, mem_info_t *resp) {
-  resp->err = NULL;
-  nvmlDevice_t device;
-  nvmlMemory_t memInfo = {0};
-  nvmlReturn_t ret;
-  const int buflen = 256;
-  char buf[buflen + 1];
-  int i;
 
-  if (h.handle == NULL) {
-    resp->err = strdup("nvml handle isn't initialized");
-    return;
-  }
-
-  ret = (*h.nvmlDeviceGetCount_v2)(&resp->count);
-  if (ret != NVML_SUCCESS) {
-    snprintf(buf, buflen, "unable to get device count: %d", ret);
-    resp->err = strdup(buf);
-    return;
-  }
-
-  resp->total = 0;
-  resp->free = 0;
-  for (i = 0; i < resp->count; i++) {
-    ret = (*h.nvmlDeviceGetHandleByIndex)(i, &device);
+void nvml_get_free(nvml_handle_t h, int device_id, uint64_t *free, uint64_t *total, uint64_t *used) {
+    nvmlDevice_t device;
+    nvmlMemory_t memInfo = {0};
+    nvmlReturn_t ret;
+    ret = (*h.nvmlDeviceGetHandleByIndex)(device_id, &device);
     if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
+        LOG(1, "unable to get device handle %d: %d", device_id, ret);
+        *free = 0;
+        return;
     }
 
     ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "device memory info lookup failure %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
+        LOG(1, "device memory info lookup failure %d: %d", device_id, ret);
+        *free = 0;
+        return;
     }
-    if (h.verbose) {
-      nvmlBrandType_t brand = 0;
-      // When in verbose mode, report more information about
-      // the card we discover, but don't fail on error
-      ret = (*h.nvmlDeviceGetName)(device, buf, buflen);
-      if (ret != NVML_SUCCESS) {
-        LOG(h.verbose, "nvmlDeviceGetName failed: %d\n", ret);
-      } else {
-        LOG(h.verbose, "[%d] CUDA device name: %s\n", i, buf);
-      }
-      ret = (*h.nvmlDeviceGetBoardPartNumber)(device, buf, buflen);
-      if (ret != NVML_SUCCESS) {
-        LOG(h.verbose, "nvmlDeviceGetBoardPartNumber failed: %d\n", ret);
-      } else {
-        LOG(h.verbose, "[%d] CUDA part number: %s\n", i, buf);
-      }
-      ret = (*h.nvmlDeviceGetSerial)(device, buf, buflen);
-      if (ret != NVML_SUCCESS) {
-        LOG(h.verbose, "nvmlDeviceGetSerial failed: %d\n", ret);
-      } else {
-        LOG(h.verbose, "[%d] CUDA S/N: %s\n", i, buf);
-      }
-      ret = (*h.nvmlDeviceGetVbiosVersion)(device, buf, buflen);
-      if (ret != NVML_SUCCESS) {
-        LOG(h.verbose, "nvmlDeviceGetVbiosVersion failed: %d\n", ret);
-      } else {
-        LOG(h.verbose, "[%d] CUDA vbios version: %s\n", i, buf);
-      }
-      ret = (*h.nvmlDeviceGetBrand)(device, &brand);
-      if (ret != NVML_SUCCESS) {
-        LOG(h.verbose, "nvmlDeviceGetBrand failed: %d\n", ret);
-      } else {
-        LOG(h.verbose, "[%d] CUDA brand: %d\n", i, brand);
-      }
-    }
-
-    LOG(h.verbose, "[%d] CUDA totalMem %ld\n", i, memInfo.total);
-    LOG(h.verbose, "[%d] CUDA freeMem %ld\n", i, memInfo.free);
-
-    resp->total += memInfo.total;
-    resp->free += memInfo.free;
-  }
+    *free = memInfo.free;
+    *total = memInfo.total;
+    *used = memInfo.used;
 }
 
-void nvml_compute_capability(nvml_handle_t h, nvml_compute_capability_t *resp) {
-  resp->err = NULL;
-  resp->major = 0;
-  resp->minor = 0;
-  nvmlDevice_t device;
-  int major = 0;
-  int minor = 0;
+
+void nvml_release(nvml_handle_t h) {
+  LOG(h.verbose, "releasing nvml library\n");
   nvmlReturn_t ret;
-  const int buflen = 256;
-  char buf[buflen + 1];
-  int i;
-
-  if (h.handle == NULL) {
-    resp->err = strdup("nvml handle not initialized");
-    return;
-  }
-
-  unsigned int devices;
-  ret = (*h.nvmlDeviceGetCount_v2)(&devices);
+  ret = (*h.nvmlShutdown)();
   if (ret != NVML_SUCCESS) {
-    snprintf(buf, buflen, "unable to get device count: %d", ret);
-    resp->err = strdup(buf);
-    return;
+    LOG(1, "error during nvmlShutdown %d", ret);
   }
-
-  for (i = 0; i < devices; i++) {
-    ret = (*h.nvmlDeviceGetHandleByIndex)(i, &device);
-    if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "unable to get device handle %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
-    }
-
-    ret = (*h.nvmlDeviceGetCudaComputeCapability)(device, &major, &minor);
-    if (ret != NVML_SUCCESS) {
-      snprintf(buf, buflen, "device compute capability lookup failure %d: %d", i, ret);
-      resp->err = strdup(buf);
-      return;
-    }
-    // Report the lowest major.minor we detect as that limits our compatibility
-    if (resp->major == 0 || resp->major > major ) {
-      resp->major = major;
-      resp->minor = minor;
-    } else if ( resp->major == major && resp->minor > minor ) {
-      resp->minor = minor;
-    }
-  }
+  UNLOAD_LIBRARY(h.handle);
+  h.handle = NULL;
 }
+
 #endif  // __APPLE__

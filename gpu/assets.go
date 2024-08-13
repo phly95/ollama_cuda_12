@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 var (
@@ -21,21 +24,34 @@ var (
 func PayloadsDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
+	var err error
 	if payloadsDir == "" {
+		runnersDir := envconfig.RunnersDir()
+
+		if runnersDir != "" {
+			payloadsDir = runnersDir
+			return payloadsDir, nil
+		}
+
+		// The remainder only applies on non-windows where we still carry payloads in the main executable
 		cleanupTmpDirs()
-		tmpDir, err := os.MkdirTemp("", "ollama")
-		if err != nil {
-			return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+		tmpDir := envconfig.TmpDir()
+		if tmpDir == "" {
+			tmpDir, err = os.MkdirTemp("", "ollama")
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir: %w", err)
+			}
+		} else {
+			err = os.MkdirAll(tmpDir, 0o755)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate tmp dir %s: %w", tmpDir, err)
+			}
 		}
 
 		// Track our pid so we can clean up orphaned tmpdirs
-		pidFilePath := filepath.Join(tmpDir, "ollama.pid")
-		pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		if err != nil {
-			return "", err
-		}
-		if _, err := pidFile.Write([]byte(fmt.Sprint(os.Getpid()))); err != nil {
-			return "", err
+		n := filepath.Join(tmpDir, "ollama.pid")
+		if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			return "", fmt.Errorf("failed to write pid file %s: %w", n, err)
 		}
 
 		// We create a distinct subdirectory for payloads within the tmpdir
@@ -47,30 +63,44 @@ func PayloadsDir() (string, error) {
 
 // Best effort to clean up prior tmpdirs
 func cleanupTmpDirs() {
-	dirs, err := filepath.Glob(filepath.Join(os.TempDir(), "ollama*"))
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "ollama*", "ollama.pid"))
 	if err != nil {
 		return
 	}
-	for _, d := range dirs {
-		info, err := os.Stat(d)
-		if err != nil || !info.IsDir() {
+
+	for _, match := range matches {
+		raw, err := os.ReadFile(match)
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Debug("not a ollama runtime directory, skipping", "path", match)
+			continue
+		} else if err != nil {
+			slog.Warn("could not read ollama.pid, skipping", "path", match, "error", err)
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(d, "ollama.pid"))
-		if err == nil {
-			pid, err := strconv.Atoi(string(raw))
-			if err == nil {
-				if proc, err := os.FindProcess(int(pid)); err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
-					// Another running ollama, ignore this tmpdir
-					continue
-				}
-			}
-		} else {
-			slog.Debug("failed to open ollama.pid", "path", d, "error", err)
-		}
-		err = os.RemoveAll(d)
+
+		pid, err := strconv.Atoi(string(raw))
 		if err != nil {
-			slog.Debug(fmt.Sprintf("unable to cleanup stale tmpdir %s: %s", d, err))
+			slog.Warn("invalid pid, skipping", "path", match, "error", err)
+			continue
+		}
+
+		p, err := os.FindProcess(pid)
+		if err == nil && !errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			slog.Warn("process still running, skipping", "pid", pid, "path", match)
+			continue
+		}
+
+		if err := os.Remove(match); err != nil {
+			slog.Warn("could not cleanup stale pidfile", "path", match, "error", err)
+		}
+
+		runners := filepath.Join(filepath.Dir(match), "runners")
+		if err := os.RemoveAll(runners); err != nil {
+			slog.Warn("could not cleanup stale runners", "path", runners, "error", err)
+		}
+
+		if err := os.Remove(filepath.Dir(match)); err != nil {
+			slog.Warn("could not cleanup stale tmpdir", "path", filepath.Dir(match), "error", err)
 		}
 	}
 }
@@ -78,13 +108,19 @@ func cleanupTmpDirs() {
 func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
-	if payloadsDir != "" {
+	runnersDir := envconfig.RunnersDir()
+	if payloadsDir != "" && runnersDir == "" && runtime.GOOS != "windows" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
 		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))
 		slog.Debug("cleaning up", "dir", tmpDir)
 		err := os.RemoveAll(tmpDir)
 		if err != nil {
-			slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			// On windows, if we remove too quickly the llama.dll may still be in-use and fail to remove
+			time.Sleep(1000 * time.Millisecond)
+			err = os.RemoveAll(tmpDir)
+			if err != nil {
+				slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
+			}
 		}
 	}
 }
@@ -105,7 +141,7 @@ func UpdatePath(dir string) {
 			}
 		}
 		newPath := strings.Join(append([]string{dir}, pathComponents...), ";")
-		slog.Info(fmt.Sprintf("Updating PATH to %s", newPath))
+		slog.Info("updating", "PATH", newPath)
 		os.Setenv("PATH", newPath)
 	}
 	// linux and darwin rely on rpath

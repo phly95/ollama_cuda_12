@@ -27,14 +27,6 @@ typedef struct nvml_handle {
   nvmlReturn_t (*nvmlShutdown)(void);
   nvmlReturn_t (*nvmlDeviceGetHandleByIndex)(unsigned int, nvmlDevice_t *);
   nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
-  nvmlReturn_t (*nvmlDeviceGetCount_v2)(unsigned int *);
-  nvmlReturn_t (*nvmlDeviceGetCudaComputeCapability)(nvmlDevice_t, int* major, int* minor);
-  nvmlReturn_t (*nvmlSystemGetDriverVersion) (char* version, unsigned int  length);
-  nvmlReturn_t (*nvmlDeviceGetName) (nvmlDevice_t device, char* name, unsigned int  length);
-  nvmlReturn_t (*nvmlDeviceGetSerial) (nvmlDevice_t device, char* serial, unsigned int  length);
-  nvmlReturn_t (*nvmlDeviceGetVbiosVersion) (nvmlDevice_t device, char* version, unsigned int  length);
-  nvmlReturn_t (*nvmlDeviceGetBoardPartNumber) (nvmlDevice_t device, char* partNumber, unsigned int  length);
-  nvmlReturn_t (*nvmlDeviceGetBrand) (nvmlDevice_t device, nvmlBrandType_t* type);
 } nvml_handle_t;
 
 typedef struct nvml_init_resp {
@@ -49,8 +41,8 @@ typedef struct nvml_compute_capability {
 } nvml_compute_capability_t;
 
 void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp);
-void nvml_check_vram(nvml_handle_t ch, mem_info_t *resp);
-void nvml_compute_capability(nvml_handle_t ch, nvml_compute_capability_t *cc);
+void nvml_get_free(nvml_handle_t ch,  int device_id, uint64_t *free, uint64_t *total, uint64_t *used);
+void nvml_release(nvml_handle_t ch);
 
 #endif  // __GPU_INFO_NVML_H__
 #endif  // __APPLE__

@@ -88,17 +88,10 @@ DialogFontSize=12
 [Files]
 Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
 Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
-Source: "..\dist\windeps\*.dll"; DestDir: "{app}"; Flags: ignoreversion 64bit
+Source: "..\dist\windows-{#ARCH}\ollama_runners\*"; DestDir: "{app}\ollama_runners"; Flags: ignoreversion 64bit recursesubdirs
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
-; Assumes v5.7, may need adjustments for v6
-#if GetEnv("HIP_PATH") != ""
-  Source: "{#GetEnv('HIP_PATH')}\bin\hipblas.dll"; DestDir: "{app}\rocm\"; Flags: ignoreversion
-  Source: "{#GetEnv('HIP_PATH')}\bin\rocblas.dll"; DestDir: "{app}\rocm\"; Flags: ignoreversion
-  ; amdhip64.dll dependency comes from the driver and must be installed already
-  Source: "{#GetEnv('HIP_PATH')}\bin\rocblas\library\*"; DestDir: "{app}\rocm\rocblas\library\"; Flags: ignoreversion
-#endif
-
+Source: "..\dist\windows-amd64\ollama_libs\*"; DestDir: "{app}\ollama_libs\"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
@@ -125,6 +118,10 @@ Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
 Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
+[InstallDelete]
+Type: filesandordirs; Name: "{%TEMP}\ollama*"
+Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
+
 [Messages]
 WizardReady=Ollama Windows Preview
 ReadyLabel1=%nLet's get you up and running with your own large language models.
@@ -132,7 +129,7 @@ SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or fi
 
 
 ;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama2
+;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.1
 ;ClickFinish=%n
 
 [Registry]
