@@ -7,50 +7,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Full build of the Mac assets
-  build-darwin:
-    runs-on: macos-12
-    environment: release
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: |
-          echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
-      - name: key
-        env:
-          MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
-          MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
-        run: |
-          echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
-          security create-keychain -p password build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p password build.keychain
-          security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "stable"
-          cache: true
-      - name: Build Darwin
-        env:
-          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ vars.APPLE_ID }}
-          SDKROOT: /Applications/Xcode_13.4.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-          DEVELOPER_DIR: /Applications/Xcode_13.4.1.app/Contents/Developer
-        run: |
-          ./scripts/build_darwin.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-darwin
-          path: |
-            dist/*arwin*
-            !dist/*-cov
 
   # Windows builds take a long time to both install the dependencies and build, so parallelize
   # CPU generation step
