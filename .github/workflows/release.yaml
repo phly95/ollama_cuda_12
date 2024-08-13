@@ -465,7 +465,6 @@ jobs:
   # Aggregate all the assets and ship a release
   release:
     needs:
-      - build-darwin
       - build-windows
       - build-linux-amd64
       - build-linux-arm64
