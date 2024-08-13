@@ -8,6 +8,7 @@ set -eu
 #  DOCKER_ORG=jdoe VERSION=0.1.30 PUSH=1 ./scripts/tag_latest.sh
 DOCKER_ORG=${DOCKER_ORG:-"ollama"}
 RELEASE_IMAGE_REPO=${RELEASE_IMAGE_REPO:-"${DOCKER_ORG}/release"}
+ARCH_IMAGE_REPO=${ARCH_IMAGE_REPO:-"${DOCKER_ORG}/release"}
 FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
 
 # Set PUSH to a non-empty string to trigger push instead of load
@@ -19,8 +20,8 @@ docker manifest create ${FINAL_IMAGE_REPO}:latest \
     ${RELEASE_IMAGE_REPO}:$VERSION-amd64 \
     ${RELEASE_IMAGE_REPO}:$VERSION-arm64
 
-docker pull ${RELEASE_IMAGE_REPO}:$VERSION-rocm
-docker tag ${RELEASE_IMAGE_REPO}:$VERSION-rocm ${FINAL_IMAGE_REPO}:rocm
+docker pull ${ARCH_IMAGE_REPO}:$VERSION-rocm
+docker tag ${ARCH_IMAGE_REPO}:$VERSION-rocm ${FINAL_IMAGE_REPO}:rocm
 
 if [ -n "${PUSH}" ]; then
     echo "Pushing latest tags up..."
@@ -29,5 +30,3 @@ if [ -n "${PUSH}" ]; then
 else
     echo "Not pushing ${FINAL_IMAGE_REPO}:latest and ${FINAL_IMAGE_REPO}:rocm"
 fi
-
-

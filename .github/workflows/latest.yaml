@@ -7,7 +7,7 @@ on:
 jobs:
   update-latest:
     environment: release
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Login to Docker Hub
@@ -15,10 +15,12 @@ jobs:
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - name: Tag images as latest
+      - name: fetch images
         env:
+          ARCH_IMAGE_REPO: dhiltgen/release
+          FINAL_IMAGE_REPO: dhiltgen/ollama
           PUSH: "1"
-        shell: bash
         run: |
           export "VERSION=${GITHUB_REF_NAME#v}"
+          env
           ./scripts/tag_latest.sh
