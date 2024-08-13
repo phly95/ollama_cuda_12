@@ -11,11 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
   pull_request:
     paths:
       - '**/*'
       - '!docs/**'
       - '!README.md'
+
 
 jobs:
   changes:
